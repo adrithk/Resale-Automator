@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Builds
+.next/
+dist/
+out/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Editor and operating system files
+.DS_Store
+.vscode/
+.idea/
+
+# Test output
+coverage/
