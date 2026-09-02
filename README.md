@@ -13,7 +13,9 @@ The planned workflow is:
 
 ## Initial implementation direction
 
-The project is currently in the planning stage. The first implementation will be a small Python backend prototype that runs from the command line in VS Code; a website will come later.
+The project is in the early Python backend prototype stage. The current
+implementation runs from the command line in VS Code; a website will come
+later.
 
 The first milestone is one Python command that accepts multiple clothing photos and a separately identified tag photo, then either returns structured clothing information and draft listing text or explains how to retake an unreadable tag photo.
 
@@ -27,7 +29,52 @@ The initial pipeline will be:
 6. Store internal analysis results as JSON so lists, warnings, confidence, and provenance remain structured.
 7. Add CSV only later as an export format for reviewed and approved listings.
 
-The first prototype will not include a website, database, pricing system, spreadsheet export, or marketplace automation.
+The first prototype will not include a website, database, pricing system,
+spreadsheet export, or marketplace automation. Pricing is planned as a later,
+separate phase that will recommend a selling price from validated facts and
+market-comparable data for user review.
+
+The provisional mapping from classifier facts to the supplied listing-template
+columns is maintained in [`FIELD_CONTRACT.md`](FIELD_CONTRACT.md). It records
+which fields are required, recommended, optional, deferred, excluded, or still
+unresolved. Only confirmed universal validation rules are currently enforced in
+Python.
+
+## Current structured-data contract
+
+Phase III adds standard-library Python contracts without calling a vision model
+or generating listing text. Command results now keep the pipeline stages
+separate:
+
+```json
+{
+  "status": "quality_checks_complete",
+  "image_analysis": {},
+  "model_analysis": null,
+  "validated_facts": null,
+  "listing_draft": null,
+  "warnings": []
+}
+```
+
+For compatibility with the Phase I/II command output, successful results also
+retain `item_photos` and `tag_photo` as top-level aliases of the values inside
+`image_analysis`.
+
+`contracts.py` can represent the candidate clothing facts, their confidence,
+provenance, review state, explicit unknown values, and conflicting evidence. It
+currently enforces only confirmed universal rules:
+
+- Confidence is between 0 and 1.
+- Known values have provenance; unknown values use JSON `null` rather than a
+  guessed placeholder.
+- Brand and labeled size come from `tag_photo` or `user_correction`.
+- Condition comes from visible item-photo evidence or explicit user input.
+- Conflicting evidence requires review.
+
+The CLI does not populate `model_analysis` or `validated_facts` yet. Category,
+condition, age, and style vocabularies and field-specific listing-readiness
+requirements remain provisional and are not enforced.
 
 ## Run the current prototype
 
@@ -78,3 +125,12 @@ The initial warning thresholds are deliberately visible and provisional:
 These measurements are heuristics. They produce review warnings and retake
 instructions; they do not determine whether a tag is readable or what garment
 is pictured. Those decisions will later use a pretrained vision model.
+
+## Keeping project context current
+
+Implementation work should update this README when it changes the architecture,
+workflow, scope, dependencies, supported formats, commands, thresholds, or safety
+boundaries. If an explicitly approved implementation changes an earlier decision,
+the new decision and its reason should be recorded rather than leaving the code and
+documentation inconsistent. `AGENTS.md` contains the durable working rules that
+future coding agents must follow.

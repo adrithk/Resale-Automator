@@ -10,6 +10,8 @@ from typing import Sequence
 import cv2
 import numpy as np
 
+from contracts import PipelineResult
+
 
 SUPPORTED_IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 MIN_IMAGE_EDGE = 1000
@@ -248,10 +250,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
     errors = validate_inputs(args.item, args.tag)
 
     if errors:
-        result = {
-            "status": "input_error",
-            "errors": errors,
-        }
+        result = PipelineResult(
+            status="input_error",
+            image_analysis={},
+        ).to_dict()
+        result["errors"] = errors
         print(json.dumps(result, indent=2))
         return 1
 
@@ -263,15 +266,20 @@ def main(arguments: Sequence[str] | None = None) -> int:
         warnings.extend(build_quality_warnings(item_photo, f"item_photo_{index}"))
     warnings.extend(build_quality_warnings(tag_photo, "tag_photo"))
 
-    result = {
-        "status": (
-            "quality_review_needed" if warnings else "quality_checks_complete"
-        ),
+    image_analysis = {
         "item_photos": item_photos,
         "tag_photo": tag_photo,
-        "warnings": warnings,
-        "next_step": "structured_data_contract",
     }
+    result = PipelineResult(
+        status=("quality_review_needed" if warnings else "quality_checks_complete"),
+        image_analysis=image_analysis,
+        warnings=warnings,
+    ).to_dict()
+
+    # Preserve the Phase I/II keys while consumers move to image_analysis.
+    result["item_photos"] = item_photos
+    result["tag_photo"] = tag_photo
+    result["next_step"] = "model_analysis"
     print(json.dumps(result, indent=2))
     return 0
 

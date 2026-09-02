@@ -149,7 +149,19 @@ class InputValidationTests(unittest.TestCase):
             result = json.loads(output.getvalue())
             self.assertEqual(exit_code, 0)
             self.assertEqual(result["status"], "quality_review_needed")
+            self.assertIsNone(result["model_analysis"])
+            self.assertIsNone(result["validated_facts"])
+            self.assertIsNone(result["listing_draft"])
+            self.assertEqual(result["next_step"], "model_analysis")
             self.assertEqual(len(result["item_photos"]), 2)
+            self.assertEqual(
+                result["image_analysis"]["item_photos"],
+                result["item_photos"],
+            )
+            self.assertEqual(
+                result["image_analysis"]["tag_photo"],
+                result["tag_photo"],
+            )
             self.assertEqual(result["item_photos"][0]["path"], str(front.resolve()))
             self.assertEqual(result["item_photos"][0]["width"], 1)
             self.assertEqual(result["item_photos"][0]["height"], 1)
@@ -169,6 +181,20 @@ class InputValidationTests(unittest.TestCase):
             self.assertEqual(result["tag_photo"]["path"], str(tag.resolve()))
             self.assertEqual(result["tag_photo"]["width"], 1)
             self.assertEqual(result["tag_photo"]["height"], 1)
+
+    def test_input_errors_preserve_the_pipeline_stage_shape(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["--item", "missing.jpg", "--tag", "missing-tag.jpg"])
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "input_error")
+        self.assertEqual(result["image_analysis"], {})
+        self.assertIsNone(result["model_analysis"])
+        self.assertIsNone(result["validated_facts"])
+        self.assertIsNone(result["listing_draft"])
+        self.assertTrue(result["errors"])
 
 
 if __name__ == "__main__":
