@@ -21,3 +21,11 @@ out/
 
 # Test output
 coverage/
+
+# Python-generated files
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local test photos
+examplephotos/
