@@ -127,6 +127,8 @@ class ValidatedClothingFacts:
     size: ClothingFact | None = None
     primary_color: ClothingFact | None = None
     secondary_color: ClothingFact | None = None
+    source_1: ClothingFact | None = None
+    source_2: ClothingFact | None = None
     age: ClothingFact | None = None
     style_1: ClothingFact | None = None
     style_2: ClothingFact | None = None
@@ -157,6 +159,7 @@ class PipelineResult:
     image_analysis: Mapping[str, Any]
     warnings: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
     model_analysis: Mapping[str, Any] | None = None
+    model_metadata: Mapping[str, Any] | None = None
     validated_facts: ValidatedClothingFacts | None = None
     listing_draft: None = None
 
@@ -166,6 +169,9 @@ class PipelineResult:
             "image_analysis": dict(self.image_analysis),
             "model_analysis": (
                 dict(self.model_analysis) if self.model_analysis is not None else None
+            ),
+            "model_metadata": (
+                dict(self.model_metadata) if self.model_metadata is not None else None
             ),
             "validated_facts": (
                 self.validated_facts.to_dict()

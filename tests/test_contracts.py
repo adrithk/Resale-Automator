@@ -126,6 +126,19 @@ class ValidatedClothingFactsTests(unittest.TestCase):
         self.assertIsNone(serialized["brand"])
         self.assertIsNone(serialized["age"]["value"])
 
+    def test_source_fields_are_part_of_the_fact_contract(self) -> None:
+        facts = ValidatedClothingFacts(
+            source_1=ClothingFact(
+                value="Preloved (preloved)",
+                confidence=0.9,
+                provenance=("item_photo_1",),
+            ),
+            source_2=ClothingFact.unknown(needs_review=True),
+        ).to_dict()
+
+        self.assertEqual(facts["source_1"]["value"], "Preloved (preloved)")
+        self.assertIsNone(facts["source_2"]["value"])
+
     def test_pipeline_result_keeps_stages_separate(self) -> None:
         result = PipelineResult(
             status="quality_checks_complete",

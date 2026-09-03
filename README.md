@@ -37,13 +37,17 @@ input and Structured Outputs. This is a hosted API decision: the project will
 not run model weights locally. The exact model ID must be used rather than the
 `gpt-5.6` alias, because that alias targets a different model tier.
 
-The integration is **planned but not implemented**. The current CLI stops after
-image-quality analysis and does not make network requests. The next milestone
-will use the Responses API to send the separately identified tag photo and all
-item photos, obtain schema-constrained candidate facts, enforce the readable-tag
-gate, and pass only supported facts into the existing Python validation and
-Depop vocabulary layers. Listing-text generation remains a later, separate
-step.
+The integration is **operational in the CLI**. `openai_vision.py` implements the
+provider boundary: it encodes JPEG, PNG, and WebP files as data URLs, labels
+every item photo and the tag photo by role, builds a strict JSON Schema request
+for `gpt-5.6-luna` with low reasoning effort and `store=False`, and defensively
+parses structured responses. `fact_validation.py` converts readable-tag
+candidates into project contracts, enforces provenance and unknown/conflict
+rules, and performs exact Depop mapping with Category before Size. After local
+validation and OpenCV checks succeed, `classifier.py` calls the real hosted API,
+captures non-secret request metadata, validates the candidates, and returns the
+combined stage-separated result. Listing-text generation remains a later,
+separate step.
 
 [`MODEL_INTEGRATION_PLAN.md`](MODEL_INTEGRATION_PLAN.md) contains the detailed
 implementation sequence, acceptance criteria, and a prompt intended for a new
@@ -94,9 +98,27 @@ currently enforces only confirmed universal rules:
 - Brand and labeled size come from `tag_photo` or `user_correction`.
 - Condition comes from visible item-photo evidence or explicit user input.
 - Conflicting evidence requires review.
+- `source_1` and `source_2` are represented independently.
 
-The CLI does not populate `model_analysis` or `validated_facts` yet. Selecting
-GPT-5.6 Luna did not change this implemented behavior.
+`fact_validation.py` applies these rules to model candidates. Unreadable or
+uncertain tags stop before validated facts and produce retake instructions.
+Readable candidates are mapped exactly for Category, Brand, Condition, Color,
+Source, Age, Style, and category-dependent Size; invalid or unmapped evidence
+becomes an explicit review issue while raw analysis remains unchanged. The CLI
+populates `model_analysis` and operational `model_metadata`; it populates
+`validated_facts` only after a readable tag passes the gate. `listing_draft`
+remains `null`.
+
+## Hosted vision boundary
+
+The project pins the official OpenAI Python SDK in `requirements.txt`. Runtime
+credentials are read only from `OPENAI_API_KEY`; the key is not a command
+argument or part of result JSON. `openai_vision.py` keeps the model ID,
+reasoning effort, timeout, retry limit, image detail, developer instruction,
+schema, image encoding, response parser, and transient-only retry loop explicit
+and testable. Ordinary tests use injected SDK/runner doubles without network
+access. Successful results record response ID, returned model ID, input/output/
+total tokens, latency, and attempt count; no API prices are hard-coded.
 
 ## Depop destination vocabulary
 
@@ -128,19 +150,44 @@ python -m pip install -r requirements.txt
 Run the input-validation command with two item photos and one tag photo:
 
 ```bash
+export OPENAI_API_KEY="your-api-key"
 python classifier.py \
   --item path/to/front.jpg \
   --item path/to/back.jpg \
   --tag path/to/tag.jpg
 ```
 
+Do not place the key in source files or pass it as a CLI argument. Local input
+errors exit with code 1 and never call the provider. Missing/rejected API
+configuration exits 2, model/provider errors exit 3, and a tag-retake result
+exits 4. `review_required` and `facts_validated` are successful command results.
+
 Run the automated tests:
 
 ```bash
-python -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
-## Current image-quality prototype
+Ordinary tests are deterministic, offline, and free. The two live smoke tests
+are skipped unless explicitly enabled. To authorize those two billed calls,
+provide at least two item photos plus separate readable and intentionally
+unreadable tag photos, then run:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+export RESALE_RUN_LIVE_SMOKE=1
+export RESALE_LIVE_ITEM_PHOTOS="/absolute/front.jpg:/absolute/back.jpg"
+export RESALE_LIVE_READABLE_TAG_PHOTO="/absolute/readable-tag.jpg"
+export RESALE_LIVE_UNREADABLE_TAG_PHOTO="/absolute/unreadable-tag.jpg"
+.venv/bin/python -m unittest tests.test_live_smoke -v
+```
+
+On macOS and Linux, separate additional item-photo paths with `:`. The live
+test first runs the same local validation as the CLI, then asserts the returned
+model ID, schema validity, latency, token usage, and tag-gate behavior. It does
+not print or store the API key and does not commit photos or responses.
+
+## Local image-quality stage
 
 The command currently accepts JPEG, PNG, and WebP files. For each item and tag
 photo it reports:
@@ -163,7 +210,8 @@ The initial warning thresholds are deliberately visible and provisional:
 
 These measurements are heuristics. They produce review warnings and retake
 instructions; they do not determine whether a tag is readable or what garment
-is pictured. Those decisions will later use a pretrained vision model.
+is pictured. The hosted vision stage makes candidate observations, after which
+Python remains authoritative for tag gating, provenance, and mapping.
 
 ## Keeping project context current
 

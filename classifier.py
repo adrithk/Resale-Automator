@@ -5,12 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Callable, Sequence
 
 import cv2
 import numpy as np
 
 from contracts import PipelineResult
+from fact_validation import validate_candidate_analysis
+from openai_vision import (
+    VisionCallResult,
+    VisionConfigurationError,
+    VisionProviderError,
+    analyze_images,
+)
 
 
 SUPPORTED_IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
@@ -200,12 +207,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--item",
         action="append",
-        required=True,
+        default=[],
         help="Path to an item photo. Repeat this option for each item photo.",
     )
     parser.add_argument(
         "--tag",
-        required=True,
         help="Path to the separately identified tag photo.",
     )
     return parser
@@ -229,7 +235,7 @@ def validate_image_file(photo: str, label: str) -> list[str]:
     return []
 
 
-def validate_inputs(item_photos: Sequence[str], tag_photo: str) -> list[str]:
+def validate_inputs(item_photos: Sequence[str], tag_photo: str | None) -> list[str]:
     """Return human-readable validation errors, or an empty list when valid."""
     errors: list[str] = []
 
@@ -239,13 +245,33 @@ def validate_inputs(item_photos: Sequence[str], tag_photo: str) -> list[str]:
     for photo in item_photos:
         errors.extend(validate_image_file(photo, "Item photo"))
 
-    errors.extend(validate_image_file(tag_photo, "Tag photo"))
+    if tag_photo is None:
+        errors.append("Provide one separately identified tag photo using --tag.")
+    else:
+        errors.extend(validate_image_file(tag_photo, "Tag photo"))
 
     return errors
 
 
-def main(arguments: Sequence[str] | None = None) -> int:
-    """Validate command-line inputs and print a structured JSON result."""
+def _add_compatibility_keys(
+    result: dict[str, Any],
+    item_photos: Sequence[dict[str, Any]],
+    tag_photo: dict[str, Any],
+    *,
+    next_step: str,
+) -> None:
+    """Retain Phase I/II aliases while consumers migrate to stage objects."""
+    result["item_photos"] = list(item_photos)
+    result["tag_photo"] = tag_photo
+    result["next_step"] = next_step
+
+
+def main(
+    arguments: Sequence[str] | None = None,
+    *,
+    vision_runner: Callable[[Sequence[str], str], VisionCallResult] = analyze_images,
+) -> int:
+    """Validate photos, call hosted vision, validate facts, and print JSON."""
     args = build_parser().parse_args(arguments)
     errors = validate_inputs(args.item, args.tag)
 
@@ -270,18 +296,77 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "item_photos": item_photos,
         "tag_photo": tag_photo,
     }
-    result = PipelineResult(
-        status=("quality_review_needed" if warnings else "quality_checks_complete"),
-        image_analysis=image_analysis,
-        warnings=warnings,
-    ).to_dict()
+    try:
+        model_result = vision_runner(args.item, args.tag)
+    except VisionConfigurationError as error:
+        result = PipelineResult(
+            status="configuration_error",
+            image_analysis=image_analysis,
+            warnings=warnings,
+        ).to_dict()
+        result["error"] = {"code": error.code, "message": error.safe_message}
+        _add_compatibility_keys(
+            result,
+            item_photos,
+            tag_photo,
+            next_step="configure_api",
+        )
+        print(json.dumps(result, indent=2))
+        return 2
+    except VisionProviderError as error:
+        result = PipelineResult(
+            status="model_error",
+            image_analysis=image_analysis,
+            warnings=warnings,
+        ).to_dict()
+        result["error"] = {"code": error.code, "message": error.safe_message}
+        _add_compatibility_keys(
+            result,
+            item_photos,
+            tag_photo,
+            next_step="retry_model_analysis",
+        )
+        print(json.dumps(result, indent=2))
+        return 3
 
-    # Preserve the Phase I/II keys while consumers move to image_analysis.
-    result["item_photos"] = item_photos
-    result["tag_photo"] = tag_photo
-    result["next_step"] = "model_analysis"
+    validation = validate_candidate_analysis(model_result.analysis)
+    model_warnings = [
+        {"code": "model_warning", "message": message}
+        for message in model_result.analysis["warnings"]
+    ]
+    combined_warnings = [*warnings, *model_warnings]
+
+    if validation.validated_facts is None:
+        status = "tag_retake_required"
+        next_step = "retake_tag_photo"
+    elif validation.needs_review or combined_warnings:
+        status = "review_required"
+        next_step = "review_facts"
+    else:
+        status = "facts_validated"
+        next_step = "review_facts"
+
+    result = PipelineResult(
+        status=status,
+        image_analysis=image_analysis,
+        warnings=combined_warnings,
+        model_analysis=model_result.analysis,
+        model_metadata=model_result.metadata,
+        validated_facts=validation.validated_facts,
+    ).to_dict()
+    result["review_reasons"] = [dict(issue) for issue in validation.issues]
+    if validation.tag_retake_instructions:
+        result["tag_retake_instructions"] = list(
+            validation.tag_retake_instructions
+        )
+    _add_compatibility_keys(
+        result,
+        item_photos,
+        tag_photo,
+        next_step=next_step,
+    )
     print(json.dumps(result, indent=2))
-    return 0
+    return 4 if status == "tag_retake_required" else 0
 
 
 if __name__ == "__main__":

@@ -1,11 +1,12 @@
 # GPT-5.6 Luna Integration Plan
 
-Status: approved direction, not implemented.
+Status: implemented (Chunks 1 through 4 complete).
 
-This document is the handoff for the next implementation milestone. It records
-the decisions, boundaries, sequence, tests, and completion criteria needed to
-connect the existing Python command-line prototype to the real hosted OpenAI
-vision API. It does not claim that the integration currently exists.
+This document is the implementation record for the hosted-vision milestone. It
+records the decisions, boundaries, sequence, tests, and completion criteria used
+to connect the Python command-line prototype to the real hosted OpenAI vision
+API. The integration described here now exists; later listing-generation,
+pricing, export, and marketplace phases remain outside its scope.
 
 ## Confirmed decisions
 
@@ -186,6 +187,21 @@ unknown values, conflicts, invalid provenance, or failed deterministic mapping.
 
 ## Small implementation chunks
 
+Implementation progress: Chunks 1 through 4 are complete. `openai_vision.py` contains the
+exact model configuration, strict schema builder, role-labeled Base64 image
+inputs, defensive response parser, and provider error base types. The official
+OpenAI Python SDK is pinned at `openai==3.7.0`. `fact_validation.py` applies the
+readable-tag gate, converts candidates into the Python contract, enforces
+provenance, and maps destination values exactly with Category before Size.
+`source_1` and `source_2` are contract fields. `classifier.py` calls the real
+hosted API only after local validation and quality checks, retains compatibility
+aliases, captures response/model/token/latency metadata, and returns structured
+configuration, provider, tag-gate, and review statuses. Transient failures use
+at most two retries after the initial request. `tests/test_live_smoke.py` adds
+separate readable-tag and unreadable-tag cases that are skipped by default and
+require explicit opt-in, credentials, user-supplied photos, and authorization
+for two billed requests.
+
 ### Chunk 1: API boundary and schema
 
 - Add a focused module for OpenAI request construction, image encoding, schema,
@@ -272,7 +288,10 @@ one live readable-tag case and one unreadable-tag case.
 - No pricing, database, spreadsheet export, website, listing prose, or
   marketplace automation is added.
 
-## Copy-paste prompt for a new LLM context
+## Original implementation prompt (historical)
+
+The prompt below is retained as the approved scope record. The work it requests
+is complete and should not be rerun as though the integration were absent.
 
 ```text
 You are working in the local project:

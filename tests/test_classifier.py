@@ -4,9 +4,11 @@ import base64
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -21,6 +23,7 @@ from classifier import (
     validate_image_file,
     validate_inputs,
 )
+from openai_vision import FACT_NAMES, VisionCallResult, VisionProviderError
 
 TEST_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -30,6 +33,47 @@ TEST_PNG = base64.b64decode(
 def write_test_image(path: Path) -> None:
     """Write a tiny real image without needing a fixture file in the repository."""
     path.write_bytes(TEST_PNG)
+
+
+def model_analysis(tag_status: str = "unreadable") -> dict:
+    return {
+        "schema_version": 1,
+        "tag_readability": {
+            "status": tag_status,
+            "confidence": 0.8,
+            "issues": ["Text is too small"] if tag_status != "readable" else [],
+            "retake_instructions": (
+                ["Retake the full tag closer and in focus."]
+                if tag_status != "readable"
+                else []
+            ),
+        },
+        "facts": {
+            name: {
+                "value": None,
+                "confidence": 0,
+                "provenance": [],
+                "needs_review": True,
+                "evidence": None,
+                "conflicts": [],
+            }
+            for name in FACT_NAMES
+        },
+        "warnings": [],
+    }
+
+
+def fake_vision_result(tag_status: str = "unreadable") -> VisionCallResult:
+    return VisionCallResult(
+        analysis=model_analysis(tag_status),
+        metadata={
+            "response_id": "resp_test",
+            "model": "gpt-5.6-luna",
+            "usage": {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
+            "latency_ms": 12.5,
+            "attempts": 1,
+        },
+    )
 
 
 class InputValidationTests(unittest.TestCase):
@@ -143,16 +187,19 @@ class InputValidationTests(unittest.TestCase):
                         str(back),
                         "--tag",
                         str(tag),
-                    ]
+                    ],
+                    vision_runner=lambda item_photos, tag_photo: fake_vision_result(),
                 )
 
             result = json.loads(output.getvalue())
-            self.assertEqual(exit_code, 0)
-            self.assertEqual(result["status"], "quality_review_needed")
-            self.assertIsNone(result["model_analysis"])
+            self.assertEqual(exit_code, 4)
+            self.assertEqual(result["status"], "tag_retake_required")
+            self.assertEqual(result["model_analysis"]["schema_version"], 1)
+            self.assertEqual(result["model_metadata"]["response_id"], "resp_test")
             self.assertIsNone(result["validated_facts"])
             self.assertIsNone(result["listing_draft"])
-            self.assertEqual(result["next_step"], "model_analysis")
+            self.assertEqual(result["next_step"], "retake_tag_photo")
+            self.assertTrue(result["tag_retake_instructions"])
             self.assertEqual(len(result["item_photos"]), 2)
             self.assertEqual(
                 result["image_analysis"]["item_photos"],
@@ -192,9 +239,115 @@ class InputValidationTests(unittest.TestCase):
         self.assertEqual(result["status"], "input_error")
         self.assertEqual(result["image_analysis"], {})
         self.assertIsNone(result["model_analysis"])
+        self.assertIsNone(result["model_metadata"])
         self.assertIsNone(result["validated_facts"])
         self.assertIsNone(result["listing_draft"])
         self.assertTrue(result["errors"])
+
+    def test_invalid_local_inputs_never_call_vision_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            front = directory / "front.png"
+            back = directory / "back.png"
+            tag = directory / "tag.png"
+            unsupported = directory / "item.gif"
+            undecodable = directory / "item.jpg"
+            for photo in (front, back, tag):
+                write_test_image(photo)
+            unsupported.write_bytes(TEST_PNG)
+            undecodable.write_text("not an image")
+            cases = {
+                "too_few": ["--item", str(front), "--tag", str(tag)],
+                "missing_tag_argument": [
+                    "--item", str(front), "--item", str(back)
+                ],
+                "missing_item_arguments": ["--tag", str(tag)],
+                "missing": [
+                    "--item", str(front), "--item", str(directory / "missing.png"), "--tag", str(tag)
+                ],
+                "unsupported": [
+                    "--item", str(unsupported), "--item", str(back), "--tag", str(tag)
+                ],
+                "undecodable": [
+                    "--item", str(undecodable), "--item", str(back), "--tag", str(tag)
+                ],
+            }
+
+            for name, arguments in cases.items():
+                with self.subTest(name=name):
+                    runner = mock.Mock()
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        exit_code = main(arguments, vision_runner=runner)
+
+                    self.assertEqual(exit_code, 1)
+                    runner.assert_not_called()
+
+    def test_readable_analysis_produces_reviewable_validated_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = [Path(temporary_directory) / name for name in ("front.png", "back.png", "tag.png")]
+            for path in paths:
+                write_test_image(path)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    ["--item", str(paths[0]), "--item", str(paths[1]), "--tag", str(paths[2])],
+                    vision_runner=lambda item_photos, tag_photo: fake_vision_result("readable"),
+                )
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "review_required")
+        self.assertIsNotNone(result["validated_facts"])
+        self.assertIsNone(result["listing_draft"])
+
+    def test_missing_api_key_is_a_structured_configuration_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = [Path(temporary_directory) / name for name in ("front.png", "back.png", "tag.png")]
+            for path in paths:
+                write_test_image(path)
+            output = io.StringIO()
+            environment = dict(os.environ)
+            environment.pop("OPENAI_API_KEY", None)
+            with mock.patch.dict(os.environ, environment, clear=True):
+                with contextlib.redirect_stdout(output):
+                    exit_code = main(
+                        ["--item", str(paths[0]), "--item", str(paths[1]), "--tag", str(paths[2])]
+                    )
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(result["status"], "configuration_error")
+        self.assertEqual(result["error"]["code"], "missing_api_key")
+
+    def test_provider_error_is_structured_and_secret_safe(self) -> None:
+        secret = "sk-user-secret-value"
+
+        def failing_runner(item_photos, tag_photo):
+            try:
+                raise RuntimeError(f"Authorization: Bearer {secret}")
+            except RuntimeError as error:
+                raise VisionProviderError(
+                    "connection_error",
+                    "Hosted vision analysis could not reach the provider after bounded retries.",
+                    transient=True,
+                ) from error
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = [Path(temporary_directory) / name for name in ("front.png", "back.png", "tag.png")]
+            for path in paths:
+                write_test_image(path)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    ["--item", str(paths[0]), "--item", str(paths[1]), "--tag", str(paths[2])],
+                    vision_runner=failing_runner,
+                )
+
+        serialized = output.getvalue()
+        self.assertEqual(exit_code, 3)
+        self.assertNotIn(secret, serialized)
+        self.assertEqual(json.loads(serialized)["status"], "model_error")
 
 
 if __name__ == "__main__":

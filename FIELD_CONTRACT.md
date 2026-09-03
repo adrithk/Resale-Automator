@@ -1,11 +1,17 @@
 # Listing Field Contract
 
 Status: editable. The destination vocabularies below were confirmed from Depop
-bulk-listing template version 6. Phase III Python structures enforce the
-universal provenance and uncertainty rules described below; the remaining
-listing-readiness decisions are not yet enforced.
+bulk-listing template version 6. Python structures now enforce the universal
+provenance and uncertainty rules described below. The hosted-model boundary
+constrains candidate output to the documented schema, and the candidate
+validation layer applies the readable-tag gate and exact destination mapping.
+Complete-listing readiness decisions remain unresolved and are not enforced.
 
-The planned vision-model integration uses hosted `gpt-5.6-luna`, but model
+The hosted integration is implemented and covered by offline fixtures and
+mocked networking. Its optional live smoke tests use user-supplied photos and
+are skipped by default; they verify this contract but do not change it.
+
+The implemented vision-model integration uses hosted `gpt-5.6-luna`, but model
 selection does not change this contract: model output is candidate evidence,
 not a validated listing value. Python must continue to enforce provenance,
 unknown values, conflicts, the readable-tag gate, and exact destination
@@ -142,9 +148,8 @@ provenance and require review.
 
 The currently implemented candidate internal fact names are `category`,
 `item_type`, `brand`, `condition`, `size`, `primary_color`, `secondary_color`,
-`age`, `style_1`, `style_2`, and `style_3`. The model-integration milestone must
-add `source_1` and `source_2` to the Python contract before validating those
-fields. These names do not themselves enforce the template priorities above.
+`source_1`, `source_2`, `age`, `style_1`, `style_2`, and `style_3`. These names
+do not themselves enforce the template priorities above.
 
 Brand and size currently accept only `tag_photo` or `user_correction`
 provenance. Condition accepts numbered item-photo evidence, `user_input`, or
@@ -152,8 +157,13 @@ provenance. Condition accepts numbered item-photo evidence, `user_input`, or
 contract can accommodate additional photo roles later.
 
 Raw `model_analysis`, `validated_facts`, and `listing_draft` remain separate
-pipeline stages. The current CLI leaves all three as `null`; Phase III does not
-decide tag readability or generate listing text.
+pipeline stages. `openai_vision.py` builds, sends, and parses strict raw candidate
+analysis. `fact_validation.py` then blocks unreadable or uncertain tags,
+validates provenance, preserves unknown/conflicting review state, and maps
+controlled values exactly through `depop_vocab.py`, resolving Category before
+Size. The CLI now runs these stages after local validation. It leaves
+`validated_facts` null behind the tag gate and always leaves `listing_draft`
+null; no integration layer generates listing prose.
 
 ## Decisions still needed
 
