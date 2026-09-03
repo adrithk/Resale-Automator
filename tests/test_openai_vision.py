@@ -84,6 +84,11 @@ class ImageRequestTests(unittest.TestCase):
         self.assertEqual(request["reasoning"], {"effort": "low"})
         self.assertIs(request["store"], False)
         self.assertIs(request["text"]["format"]["strict"], True)
+        self.assertIn("up to three", request["instructions"])
+        self.assertIn("lower confidence", request["instructions"])
+        self.assertIn("never force a Style", request["instructions"])
+        self.assertIn("W32 L34", request["instructions"])
+        self.assertIn("do not discard either measurement", request["instructions"])
         content = request["input"][0]["content"]
         labels = [part["text"] for part in content if part["type"] == "input_text"]
         self.assertIn("Image role: item_photo_1", labels)
@@ -100,13 +105,39 @@ class ImageRequestTests(unittest.TestCase):
         self.assertEqual(set(schema["required"]), set(schema["properties"]))
         fact = schema["properties"]["facts"]["properties"]["brand"]
         self.assertFalse(fact["additionalProperties"])
+        self.assertEqual(fact["properties"]["provenance"]["items"]["enum"], ["tag_photo"])
+        condition = schema["properties"]["facts"]["properties"]["condition"]
         self.assertEqual(
-            fact["properties"]["provenance"]["items"]["enum"],
-            ["item_photo_1", "tag_photo"],
+            condition["properties"]["provenance"]["items"]["enum"], ["item_photo_1"]
         )
+
+    def test_schema_enumerates_controlled_destination_values(self) -> None:
+        schema = build_model_analysis_schema(("item_photo_1", "tag_photo"))
+        facts = schema["properties"]["facts"]["properties"]
+
+        self.assertIn(
+            "Men >> Bottoms >> Jeans (menswear, bottoms, jeans)",
+            facts["category"]["properties"]["value"]["enum"],
+        )
+        self.assertNotIn("bottoms", facts["category"]["properties"]["value"]["enum"])
+        self.assertIn("Used - Good (used_good)", facts["condition"]["properties"]["value"]["enum"])
+        self.assertIn("gray", facts["primary_color"]["properties"]["value"]["enum"])
+        self.assertIn("Vintage (vintage)", facts["source_1"]["properties"]["value"]["enum"])
+        self.assertIn("Modern (modern)", facts["age"]["properties"]["value"]["enum"])
+        self.assertIn("Utility (techwear)", facts["style_1"]["properties"]["value"]["enum"])
 
 
 class ResponseParsingTests(unittest.TestCase):
+    def test_sanitized_live_regression_fixture_is_rejected_before_mapping(self) -> None:
+        fixture = Path(__file__).parent / "fixtures" / "sanitized_live_response.json"
+        analysis = json.loads(fixture.read_text(encoding="utf-8"))
+
+        with self.assertRaisesRegex(VisionResponseError, "exact supported value"):
+            parse_model_response(
+                {"status": "completed", "output_text": json.dumps(analysis)},
+                photo_roles=("item_photo_1", "item_photo_2", "tag_photo"),
+            )
+
     def test_parses_strict_structured_response(self) -> None:
         analysis = valid_analysis()
         response = {
@@ -147,6 +178,67 @@ class ResponseParsingTests(unittest.TestCase):
                 {"status": "completed", "output_text": json.dumps(analysis)},
                 photo_roles=("item_photo_1", "tag_photo"),
             )
+
+    def test_rejects_disallowed_provenance_and_literal_null(self) -> None:
+        analysis = valid_analysis()
+        analysis["facts"]["condition"] = candidate_fact(
+            value="Used - Good (used_good)",
+            confidence=0.7,
+            provenance=["tag_photo"],
+            evidence="Visible wear",
+        )
+        with self.assertRaisesRegex(VisionResponseError, "unsupplied role"):
+            parse_model_response(
+                {"status": "completed", "output_text": json.dumps(analysis)},
+                photo_roles=("item_photo_1", "tag_photo"),
+            )
+
+        analysis = valid_analysis()
+        analysis["facts"]["age"]["value"] = "null"
+        with self.assertRaisesRegex(VisionResponseError, "JSON null"):
+            parse_model_response({"status": "completed", "output_text": json.dumps(analysis)})
+
+    def test_rejects_non_vocabulary_controlled_values(self) -> None:
+        invalid_values = {
+            "category": "bottoms",
+            "condition": "Good pre-owned condition with visible wear",
+            "primary_color": "black-ish",
+            "source_1": "thrifted",
+            "age": "1990s",
+            "style_1": "five-pocket",
+        }
+        for field_name, value in invalid_values.items():
+            with self.subTest(field_name=field_name):
+                analysis = valid_analysis()
+                analysis["facts"][field_name]["value"] = value
+                with self.assertRaisesRegex(VisionResponseError, "exact supported value"):
+                    parse_model_response(
+                        {"status": "completed", "output_text": json.dumps(analysis)}
+                    )
+
+    def test_accepts_exact_controlled_values_and_gray_alias(self) -> None:
+        analysis = valid_analysis()
+        exact_values = {
+            "category": "Men >> Bottoms >> Jeans (menswear, bottoms, jeans)",
+            "condition": "Used - Good (used_good)",
+            "primary_color": "gray",
+            "source_1": "Vintage (vintage)",
+            "age": "Modern (modern)",
+            "style_1": "Utility (techwear)",
+        }
+        for field_name, value in exact_values.items():
+            analysis["facts"][field_name] = candidate_fact(
+                value=value,
+                confidence=0.8,
+                provenance=["item_photo_1"],
+                evidence="Visible evidence.",
+            )
+
+        parsed = parse_model_response(
+            {"status": "completed", "output_text": json.dumps(analysis)},
+            photo_roles=("item_photo_1", "tag_photo"),
+        )
+        self.assertEqual(parsed["facts"]["primary_color"]["value"], "gray")
 
     def test_rejects_refusal(self) -> None:
         response = {

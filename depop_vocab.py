@@ -42,6 +42,7 @@ SIZE_ALIASES = {
     "one-size": "one size",
     "onesize": "one size",
 }
+PLAIN_WAIST_PATTERN = re.compile(r"^[1-9][0-9]?$")
 
 
 class DepopVocabularyError(ValueError):
@@ -162,8 +163,22 @@ class DepopVocabulary:
         if not key:
             return None
         key = SIZE_ALIASES.get(key, key)
+        category_match = self.require_match("category", category)
+        valid_sizes = self.valid_sizes(category_match.upload_value)
+
+        # For jeans, a bare number entered during review means waist inches.
+        # Canonical output still uses Depop's quoted value, such as 32".
+        if (
+            category_match.code is not None
+            and category_match.code.endswith(", bottoms, jeans")
+            and PLAIN_WAIST_PATTERN.fullmatch(key)
+        ):
+            waist_value = f'{key}"'
+            if waist_value in valid_sizes:
+                return waist_value
+
         matches = [
-            size for size in self.valid_sizes(category) if _normalize_size(size) == key
+            size for size in valid_sizes if _normalize_size(size) == key
         ]
         return matches[0] if len(matches) == 1 else None
 

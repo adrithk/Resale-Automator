@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Mapping
 
 from contracts import (
@@ -33,6 +34,16 @@ DEFAULT_TAG_RETAKE_INSTRUCTIONS = (
     "Retake the tag close up in bright, even light with all text in focus.",
     "Keep the full tag inside the frame and change the angle to remove glare.",
 )
+W_AND_L_SIZE = re.compile(
+    r"^\s*W\s*(\d{1,2})(?:\s*(?:/|-)?\s*L\s*(\d{1,2}))?\s*$",
+    re.IGNORECASE,
+)
+WAIST_BY_LENGTH_SIZE = re.compile(
+    r"^\s*(?:waist\s*[x×]\s*(?:length|inseam)\s*)?"
+    r"(\d{1,2})\s*[x×]\s*(\d{1,2})\s*"
+    r'(?:"|in(?:ch(?:es)?)?\.?)?\s*$',
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +70,17 @@ def _unknown_review_fact() -> ClothingFact:
 def _candidate_fact(field_name: str, raw: Mapping[str, Any]) -> ClothingFact:
     """Build a contract fact while strengthening model semantic invariants."""
     value = raw["value"]
+    if isinstance(value, str) and value.casefold().strip() in {"null", "unknown", "n/a", "none"}:
+        raise ValueError(f"{field_name} must use JSON null for an unknown value")
+    for claim in raw["conflicts"]:
+        claim_value = claim["value"]
+        if isinstance(claim_value, str) and claim_value.casefold().strip() in {
+            "null",
+            "unknown",
+            "n/a",
+            "none",
+        }:
+            raise ValueError(f"{field_name} conflict must use a real candidate value")
     conflicts = tuple(
         EvidenceClaim(
             value=claim["value"],
@@ -91,6 +113,57 @@ def _map_value(vocabulary: DepopVocabulary, field_name: str, value: str) -> str 
     return match.upload_value if match is not None else None
 
 
+def _parse_waist_and_inseam(value: str) -> tuple[str, str | None] | None:
+    """Parse common tag formats without guessing unlabeled measurements."""
+    for pattern in (W_AND_L_SIZE, WAIST_BY_LENGTH_SIZE):
+        match = pattern.fullmatch(value)
+        if match is not None:
+            return match.group(1), match.group(2)
+    return None
+
+
+def _map_size_value(vocabulary: DepopVocabulary, category: str, value: str) -> str | None:
+    """Map a category-dependent size, extracting a labeled jeans waist exactly."""
+    mapped = vocabulary.match_size(category, value)
+    if mapped is not None:
+        return mapped
+    measurements = _parse_waist_and_inseam(value)
+    return (
+        vocabulary.match_size(category, f'{measurements[0]}"')
+        if measurements is not None
+        else None
+    )
+
+
+def _inseam_from_labeled_size(fact: ClothingFact) -> ClothingFact | None:
+    """Retain an explicit tag inseam as internal validated evidence for later prose."""
+    if fact.value is None:
+        return None
+    measurements = _parse_waist_and_inseam(fact.value)
+    if measurements is None or measurements[1] is None:
+        return None
+    return ClothingFact(
+        value=f'{measurements[1]}"',
+        confidence=fact.confidence,
+        provenance=fact.provenance,
+        needs_review=fact.needs_review,
+        conflicts=(),
+    )
+
+
+def _accepted_style_fact(fact: ClothingFact) -> ClothingFact:
+    """Keep exact mapped Style values without requiring review for low confidence alone."""
+    if not fact.needs_review or fact.conflicts:
+        return fact
+    return ClothingFact(
+        value=fact.value,
+        confidence=fact.confidence,
+        provenance=fact.provenance,
+        needs_review=False,
+        conflicts=fact.conflicts,
+    )
+
+
 def _map_fact(
     vocabulary: DepopVocabulary,
     field_name: str,
@@ -102,9 +175,7 @@ def _map_fact(
         return fact
 
     if field_name == "size":
-        mapped_value = (
-            vocabulary.match_size(category, fact.value) if category is not None else None
-        )
+        mapped_value = _map_size_value(vocabulary, category, fact.value) if category else None
         mapped_conflicts = tuple(
             EvidenceClaim(
                 value=mapped,
@@ -112,7 +183,8 @@ def _map_fact(
                 provenance=claim.provenance,
             )
             for claim in fact.conflicts
-            if (mapped := vocabulary.match_size(category, claim.value)) is not None
+            if category is not None
+            and (mapped := _map_size_value(vocabulary, category, claim.value)) is not None
         ) if category is not None else ()
     elif field_name in DESTINATION_FIELDS:
         mapped_value = _map_value(vocabulary, field_name, fact.value)
@@ -187,6 +259,17 @@ def validate_candidate_analysis(
             )
             continue
 
+        if field_name == "age" and candidate.needs_review:
+            validated[field_name] = _unknown_review_fact()
+            issues.append(
+                _issue(
+                    "age_requires_confirmation",
+                    field_name,
+                    "Leave Age blank unless the proposed exact value is not review-flagged.",
+                )
+            )
+            continue
+
         category = validated.get("category")
         mapped = _map_fact(
             destination,
@@ -206,7 +289,13 @@ def validate_candidate_analysis(
             )
             continue
 
+        if field_name.startswith("style_"):
+            mapped = _accepted_style_fact(mapped)
         validated[field_name] = mapped
+        if field_name == "size":
+            inseam = _inseam_from_labeled_size(candidate)
+            if inseam is not None:
+                validated["inseam"] = inseam
         if mapped.needs_review:
             issues.append(
                 _issue(

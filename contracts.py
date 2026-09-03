@@ -7,9 +7,21 @@ import re
 from typing import Any, Mapping, Sequence
 
 
-TAG_DERIVED_FACTS = {"brand", "size"}
+TAG_DERIVED_FACTS = {"brand", "size", "inseam"}
 TAG_DERIVED_PROVENANCE = {"tag_photo", "user_correction"}
 CONDITION_USER_PROVENANCE = {"user_input", "user_correction"}
+ITEM_PHOTO_DERIVED_FACTS = {
+    "category",
+    "item_type",
+    "condition",
+    "primary_color",
+    "secondary_color",
+    "style_1",
+    "style_2",
+    "style_3",
+}
+TAG_OR_ITEM_FACTS = {"source_1", "source_2", "age"}
+TAG_OR_ITEM_USER_PROVENANCE = {"user_input", "user_correction"}
 ITEM_PHOTO_PROVENANCE = re.compile(r"item_photo_[1-9][0-9]*\Z")
 
 
@@ -98,14 +110,22 @@ def _validate_field_sources(field_name: str, sources: set[str]) -> None:
     ):
         raise ValueError(f"{field_name} must come from tag_photo or user_correction")
 
-    if field_name == "condition" and not all(
+    if field_name in ITEM_PHOTO_DERIVED_FACTS and not all(
         ITEM_PHOTO_PROVENANCE.fullmatch(source)
-        or source in CONDITION_USER_PROVENANCE
+        or (field_name == "condition" and source in CONDITION_USER_PROVENANCE)
         for source in sources
     ):
         raise ValueError(
-            "condition must come from visible item-photo evidence or explicit user input"
+            f"{field_name} must come from visible item-photo evidence"
         )
+
+    if field_name in TAG_OR_ITEM_FACTS and not all(
+        ITEM_PHOTO_PROVENANCE.fullmatch(source)
+        or source == "tag_photo"
+        or source in TAG_OR_ITEM_USER_PROVENANCE
+        for source in sources
+    ):
+        raise ValueError(f"{field_name} must come from item/tag evidence or explicit user input")
 
 
 def validate_fact_provenance(field_name: str, fact: ClothingFact) -> None:
@@ -125,6 +145,7 @@ class ValidatedClothingFacts:
     brand: ClothingFact | None = None
     condition: ClothingFact | None = None
     size: ClothingFact | None = None
+    inseam: ClothingFact | None = None
     primary_color: ClothingFact | None = None
     secondary_color: ClothingFact | None = None
     source_1: ClothingFact | None = None
@@ -161,7 +182,7 @@ class PipelineResult:
     model_analysis: Mapping[str, Any] | None = None
     model_metadata: Mapping[str, Any] | None = None
     validated_facts: ValidatedClothingFacts | None = None
-    listing_draft: None = None
+    listing_draft: Mapping[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -178,6 +199,8 @@ class PipelineResult:
                 if self.validated_facts is not None
                 else None
             ),
-            "listing_draft": self.listing_draft,
+            "listing_draft": (
+                dict(self.listing_draft) if self.listing_draft is not None else None
+            ),
             "warnings": [dict(warning) for warning in self.warnings],
         }

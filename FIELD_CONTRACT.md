@@ -40,18 +40,19 @@ the user supplies, and what stays out of scope.
 | Price | Deferred | Future pricing system using validated facts and market-comparable data | Recommend a reasonable selling price in a later phase and require user review; do not guess a price during classification. |
 | Brand | Required | Readable tag, or explicit user correction | Never guess a brand from weak visual evidence. |
 | Condition | Required | Visible garment evidence, then exact Depop mapping and user review | Must use one of the five confirmed values; state only visible condition and do not infer hidden defects. |
-| Size | Required | Readable tag, or explicit user correction | Preserve the labeled size and map it only after Category selects the applicable size vocabulary. |
+| Size | Required | Readable tag, or explicit user correction | Map jeans labels such as `W36 L34`, `32x34`, or `Waist × Length 32 × 34 inch` by waist only after Category resolves; during review, a bare number such as `32` means waist inches and is stored as `32"`. Retain the parsed inseam for description wording. |
+| Inseam (internal) | Optional | Readable tag, or explicit user correction | Retained tag evidence such as `34"`; it is not a Depop upload field and will be used only by a future listing-description step. |
 | Color 1 | Required | Garment photos, then exact Depop mapping and user review | Primary visible color mapped to one of the 19 confirmed values. |
 | Color 2 | Recommended | Garment photos, then exact Depop mapping and user review | Include only when a meaningful secondary color maps to a confirmed value. |
 | Source 1 | Recommended | Item/tag evidence or user input, then review | First applicable Depop source value from the confirmed vocabulary below. |
 | Source 2 | Optional | Item/tag evidence or user input, then review | Second applicable Depop source value; omit when only one applies. |
-| Age | Recommended | Tag/item evidence or user input, then exact Depop mapping and review | Use one of the eight confirmed values or `unknown`; never guess an era or age. |
-| Style 1 | Recommended | Garment photos, then exact Depop mapping and user review | Primary style tag from the 32 confirmed values. |
-| Style 2 | Optional | Garment photos, then exact Depop mapping and user review | Additional confirmed style tag only when well supported. |
-| Style 3 | Optional | Garment photos, then exact Depop mapping and user review | Additional confirmed style tag only when well supported. |
+| Age | Recommended | Explicit tag/item evidence or user input, then exact Depop mapping | Leave blank when review-flagged; never infer an era from styling or construction. |
+| Style 1 | Recommended | Garment photos, then exact Depop mapping | Primary style tag from the 32 confirmed values; an exact non-conflicting value may be retained despite low confidence. |
+| Style 2 | Optional | Garment photos, then exact Depop mapping | Additional confirmed style tag; an exact non-conflicting value may be retained despite low confidence. |
+| Style 3 | Optional | Garment photos, then exact Depop mapping | Additional confirmed style tag; an exact non-conflicting value may be retained despite low confidence. |
 | Location | Deferred | User or future inventory settings | Operational inventory data selected from the 664 template values, not a classifier fact. |
-| Picture Hero URL | Deferred | Future upload/storage step | The current CLI uses a local hero-photo path; URL creation comes later. |
-| Picture 2 URL | Deferred | Future upload/storage step | At least two local item photos are required now; URL creation comes later. |
+| Picture Hero URL | Deferred | Future upload/storage step | The current CLI uses local item-photo paths; unordered folder mode predicts front/back/detail roles, but URL creation comes later. |
+| Picture 2 URL | Deferred | Future upload/storage step | At least two local item photos are required now; explicit paths or confirmed unordered-folder roles are accepted, while URL creation comes later. |
 | Picture 3 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
 | Picture 4 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
 | Picture 5 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
@@ -131,8 +132,19 @@ defines where it belongs.
 
 The provisional succinct patterns are:
 
-- Draft title: `{Color 1} {Brand} {item type} — Size {Size}`
+- Draft title: `{Brand} {Color 1} {item type}` (do not include Size)
 - Description: `{Brand} {item type} in {Color 1}[ and {Color 2}]. {Condition}. Labeled size {Size}.`
+
+The implemented deterministic generator follows these patterns after final fact
+approval, adds a validated Inseam to the size sentence when present, and may add
+confirmed Style and Age sentences. Blank optional facts are omitted. The title
+and description remain editable drafts until separately approved.
+
+The terminal flow performs that separate draft review. A non-empty title and
+description must be explicitly approved before the status becomes
+`listing_approved`. Every approved result is then automatically saved under a
+random UUID filename in `approved_listings/`; exclusive creation prevents
+overwriting an existing file.
 
 Both strings must be generated only after their input facts have been validated.
 If a required fact is missing, return a review requirement instead of inventing
@@ -162,8 +174,34 @@ analysis. `fact_validation.py` then blocks unreadable or uncertain tags,
 validates provenance, preserves unknown/conflicting review state, and maps
 controlled values exactly through `depop_vocab.py`, resolving Category before
 Size. The CLI now runs these stages after local validation. It leaves
-`validated_facts` null behind the tag gate and always leaves `listing_draft`
-null; no integration layer generates listing prose.
+`validated_facts` and `listing_draft` null behind the tag gate. In `--review`
+mode, it generates listing prose only after final fact approval and keeps the
+draft separate for another explicit review.
+
+The first successful hosted run confirmed that free-form candidate vocabulary is
+not sufficient: a generic category such as `bottoms`, prose condition text, and
+descriptive traits such as `five-pocket` cannot be uploaded as exact destination
+values. The strict request schema therefore enumerates controlled Category,
+Condition, Color, Source, Age, and Style values (with the documented `gray`
+color alias), while Brand remains separately exact-mapped in Python. It also
+limits Brand and Size to `tag_photo`, Condition and visible garment fields to
+numbered item photos, and Source/Age to sent item or tag photos. Unknown model
+values must be JSON `null`; literal placeholder strings are rejected before
+validation.
+
+For Style 1–3, the model should propose as many distinct exact confirmed styles
+as the visible garment reasonably supports, up to three. Lower confidence alone
+does not require an otherwise valid non-conflicting style to be blank, but the
+model must not force unsupported descriptive traits into empty Style slots.
+
+Human-edited facts must pass `review_validation.py` before approval. Required
+final fields are Category, Item Type, Brand, Condition, Size, and Color 1.
+Controlled fields are exact-mapped again, Size is checked only after Category,
+Inseam accepts a numeric inch measurement, and optional fields may remain blank.
+Approved facts are plain final values without per-field correction provenance.
+The CLI exposes this boundary with `classifier.py --review`; it retries invalid
+fields locally and requires explicit confirmation before returning an approved
+result.
 
 ## Decisions still needed
 

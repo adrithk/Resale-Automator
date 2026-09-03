@@ -29,3 +29,7 @@ __pycache__/
 
 # Local test photos
 examplephotos/
+
+# Locally approved listing results
+approved_listings/*
+!approved_listings/.gitkeep

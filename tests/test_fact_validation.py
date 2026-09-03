@@ -74,7 +74,7 @@ class FactMappingTests(unittest.TestCase):
         outcome = validate_candidate_analysis(
             analysis_with(
                 category=known(
-                    "Women >> Dresses >> Going out dresses",
+                    "Women >> Dresses >> Going out dresses (womenswear, dresses, going-out-dresses)",
                     ("item_photo_1",),
                 ),
                 brand=known("Levi's", ("tag_photo",)),
@@ -95,6 +95,87 @@ class FactMappingTests(unittest.TestCase):
         self.assertEqual(facts["condition"]["value"], "Used - Good (used_good)")
         self.assertEqual(facts["primary_color"]["value"], "Grey (grey)")
         self.assertEqual(facts["source_1"]["value"], "Preloved (preloved)")
+
+    def test_jeans_size_uses_waist_and_retains_tag_inseam(self) -> None:
+        outcome = validate_candidate_analysis(
+            analysis_with(
+                category=known(
+                    "Men >> Bottoms >> Jeans (menswear, bottoms, jeans)",
+                    ("item_photo_1",),
+                ),
+                size=known("W36 L34", ("tag_photo",)),
+            )
+        )
+        facts = outcome.validated_facts.to_dict()
+
+        self.assertEqual(facts["size"]["value"], '36"')
+        self.assertEqual(facts["inseam"]["value"], '34"')
+        self.assertEqual(facts["inseam"]["provenance"], ["tag_photo"])
+        self.assertNotIn(
+            ("size", "unmapped_value"),
+            {(issue["field"], issue["code"]) for issue in outcome.issues},
+        )
+
+    def test_jeans_waist_by_length_tag_formats_retain_both_measurements(self) -> None:
+        for labeled_size in (
+            "32×34inch",
+            "32x34",
+            "32 X 34 inches",
+            "Waist×Length 32×34inch",
+            "Waist x Inseam 32 x 34 in.",
+        ):
+            with self.subTest(labeled_size=labeled_size):
+                outcome = validate_candidate_analysis(
+                    analysis_with(
+                        category=known(
+                            "Men >> Bottoms >> Jeans (menswear, bottoms, jeans)",
+                            ("item_photo_1",),
+                        ),
+                        size=known(labeled_size, ("tag_photo",)),
+                    )
+                )
+                facts = outcome.validated_facts.to_dict()
+
+                self.assertEqual(facts["size"]["value"], '32"')
+                self.assertEqual(facts["inseam"]["value"], '34"')
+                self.assertNotIn(
+                    ("size", "unmapped_value"),
+                    {(issue["field"], issue["code"]) for issue in outcome.issues},
+                )
+
+    def test_review_flagged_age_is_left_blank(self) -> None:
+        outcome = validate_candidate_analysis(
+            analysis_with(
+                age=known(
+                    "Modern (modern)",
+                    ("item_photo_1",),
+                    needs_review=True,
+                )
+            )
+        )
+        facts = outcome.validated_facts.to_dict()
+
+        self.assertIsNone(facts["age"]["value"])
+        self.assertIn(
+            ("age", "age_requires_confirmation"),
+            {(issue["field"], issue["code"]) for issue in outcome.issues},
+        )
+
+    def test_review_flagged_exact_style_is_accepted_without_conflict(self) -> None:
+        outcome = validate_candidate_analysis(
+            analysis_with(
+                style_2=known(
+                    "Streetwear (streetwear)",
+                    ("item_photo_1",),
+                    confidence=0.62,
+                    needs_review=True,
+                )
+            )
+        )
+        fact = outcome.validated_facts.to_dict()["style_2"]
+
+        self.assertEqual(fact["value"], "Streetwear (streetwear)")
+        self.assertFalse(fact["needs_review"])
 
     def test_source_values_must_match_confirmed_vocabulary(self) -> None:
         outcome = validate_candidate_analysis(
@@ -151,6 +232,44 @@ class FactMappingTests(unittest.TestCase):
             issue["field"] for issue in outcome.issues if issue["code"] == "invalid_candidate"
         }
         self.assertEqual(invalid_fields, {"brand", "condition"})
+
+    def test_visible_fields_reject_tag_provenance(self) -> None:
+        outcome = validate_candidate_analysis(
+            analysis_with(
+                primary_color=known("Black", ("tag_photo",)),
+                style_1=known("Utility (techwear)", ("tag_photo",)),
+            )
+        )
+        facts = outcome.validated_facts.to_dict()
+
+        self.assertIsNone(facts["primary_color"]["value"])
+        self.assertIsNone(facts["style_1"]["value"])
+
+    def test_placeholder_and_unsupported_style_become_unknown(self) -> None:
+        placeholder_conflict = {
+            "value": "null",
+            "confidence": 0.4,
+            "provenance": ["item_photo_1"],
+        }
+        outcome = validate_candidate_analysis(
+            analysis_with(
+                source_1=known("null", ("item_photo_1",)),
+                style_1=known("five-pocket", ("item_photo_1",)),
+                style_2=known("button fly", ("item_photo_1",)),
+                primary_color=known("Black", ("item_photo_1",), conflicts=(placeholder_conflict,)),
+            )
+        )
+        facts = outcome.validated_facts.to_dict()
+
+        self.assertIsNone(facts["source_1"]["value"])
+        self.assertIsNone(facts["style_1"]["value"])
+        self.assertIsNone(facts["style_2"]["value"])
+        self.assertIsNone(facts["primary_color"]["value"])
+        invalid_fields = {issue["field"] for issue in outcome.issues if issue["code"] == "invalid_candidate"}
+        self.assertIn("source_1", invalid_fields)
+        self.assertIn("primary_color", invalid_fields)
+        unmapped_fields = {issue["field"] for issue in outcome.issues if issue["code"] == "unmapped_value"}
+        self.assertEqual({"style_1", "style_2"}, unmapped_fields & {"style_1", "style_2"})
 
     def test_conflicts_are_preserved_and_require_review(self) -> None:
         conflict = {

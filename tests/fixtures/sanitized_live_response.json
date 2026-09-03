@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "tag_readability": {"status": "readable", "confidence": 0.86, "issues": ["Tag is worn."], "retake_instructions": []},
+  "facts": {
+    "category": {"value": "bottoms", "confidence": 0.99, "provenance": ["item_photo_1", "item_photo_2"], "needs_review": false, "evidence": "Jeans visible.", "conflicts": []},
+    "item_type": {"value": "jeans", "confidence": 0.99, "provenance": ["item_photo_1"], "needs_review": false, "evidence": "Denim trousers.", "conflicts": []},
+    "brand": {"value": "Levi's", "confidence": 0.9, "provenance": ["tag_photo"], "needs_review": false, "evidence": "Tag text.", "conflicts": []},
+    "condition": {"value": "Good pre-owned condition with visible wear", "confidence": 0.84, "provenance": ["item_photo_1"], "needs_review": false, "evidence": "Wear visible.", "conflicts": []},
+    "size": {"value": "W36 L34", "confidence": 0.8, "provenance": ["tag_photo"], "needs_review": true, "evidence": "Tag text.", "conflicts": []},
+    "primary_color": {"value": "Black (black)", "confidence": 0.91, "provenance": ["item_photo_1"], "needs_review": false, "evidence": "Black denim.", "conflicts": []},
+    "secondary_color": {"value": "Grey (grey)", "confidence": 0.74, "provenance": ["item_photo_1"], "needs_review": false, "evidence": "Grey fading.", "conflicts": []},
+    "source_1": {"value": "null", "confidence": 0, "provenance": [], "needs_review": true, "evidence": null, "conflicts": []},
+    "source_2": {"value": "null", "confidence": 0, "provenance": [], "needs_review": true, "evidence": null, "conflicts": []},
+    "age": {"value": null, "confidence": 0, "provenance": [], "needs_review": true, "evidence": null, "conflicts": []},
+    "style_1": {"value": "straight leg", "confidence": 0.9, "provenance": ["item_photo_1"], "needs_review": false, "evidence": "Straight silhouette.", "conflicts": []},
+    "style_2": {"value": "five-pocket", "confidence": 0.98, "provenance": ["item_photo_1"], "needs_review": false, "evidence": "Five pockets.", "conflicts": []},
+    "style_3": {"value": "button fly", "confidence": 0.88, "provenance": ["item_photo_1"], "needs_review": false, "evidence": "Buttons visible.", "conflicts": []}
+  },
+  "warnings": []
+}

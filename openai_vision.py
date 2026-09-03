@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from openai import (
     APIConnectionError,
@@ -19,6 +19,8 @@ from openai import (
     OpenAIError,
     RateLimitError,
 )
+
+from depop_vocab import DepopVocabulary
 
 
 DEFAULT_MODEL = "gpt-5.6-luna"
@@ -52,12 +54,50 @@ FACT_NAMES = (
     "style_3",
 )
 
+CONTROLLED_FACT_VOCABULARIES = {
+    "category": "category",
+    "condition": "condition",
+    "primary_color": "color",
+    "secondary_color": "color",
+    "source_1": "source",
+    "source_2": "source",
+    "age": "age",
+    "style_1": "style",
+    "style_2": "style",
+    "style_3": "style",
+}
+TAG_ONLY_FACTS = {"brand", "size"}
+ITEM_PHOTO_ONLY_FACTS = {
+    "category",
+    "item_type",
+    "condition",
+    "primary_color",
+    "secondary_color",
+    "style_1",
+    "style_2",
+    "style_3",
+}
+NULL_PLACEHOLDERS = {"null", "unknown", "n/a", "none"}
+
 DEVELOPER_INSTRUCTIONS = """Analyze only the supplied garment and tag images.
 Treat each image-role label as authoritative. Do not infer brand or labeled size
 from item appearance; those values may come only from tag_photo. Mark the tag
 unreadable or uncertain when relevant text cannot be read confidently. Describe
+When a jeans tag shows both waist and length or inseam, preserve both in the
+size candidate using W{waist} L{length} format. For example, "Waist x Length
+32 x 34 inch" must become "W32 L34"; do not discard either measurement.
 only visible condition and do not infer hidden defects. Use null, zero confidence,
 and review flags instead of guessing. Preserve conflicts when images disagree.
+For controlled destination fields, return an exact schema-listed value or JSON
+null. Do not use literal placeholder strings such as "null". Style fields are
+only for exact confirmed Depop Style values. Propose as many distinct supported
+styles as the visible garment reasonably supports, up to three; lower confidence
+alone is not a reason to leave a supported Style blank. Return null for
+descriptive traits that are not confirmed styles, and never force a Style merely
+to fill a slot. Category must be an exact Depop category, never a generic
+grouping, so its dependent labeled Size can be checked in Python.
+Return Age only when an exact supported era is established by explicit visible
+tag evidence; do not infer it from styling, construction, or apparent age.
 Return candidate evidence only, never listing prose, prices, exports, or actions.
 """
 
@@ -119,32 +159,60 @@ def _object_schema(properties: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _allowed_provenance_roles(field_name: str, photo_roles: Sequence[str]) -> list[str]:
+    """Return sent photo roles permitted for one candidate field."""
+    item_roles = [role for role in photo_roles if role.startswith("item_photo_")]
+    if field_name in TAG_ONLY_FACTS:
+        return [role for role in photo_roles if role == "tag_photo"]
+    if field_name in ITEM_PHOTO_ONLY_FACTS:
+        return item_roles
+    # Source and Age can use visible item or tag evidence under FIELD_CONTRACT.md.
+    return list(photo_roles)
+
+
+def _controlled_value_schema(field_name: str, vocabulary: DepopVocabulary) -> dict[str, Any]:
+    """Constrain a destination field without placing the large Brand list in schema."""
+    vocabulary_field = CONTROLLED_FACT_VOCABULARIES.get(field_name)
+    if vocabulary_field is None:
+        return {"type": ["string", "null"]}
+    values = list(vocabulary.values(vocabulary_field))
+    if vocabulary_field == "color":
+        values.append("gray")
+    return {"type": ["string", "null"], "enum": values + [None]}
+
+
 def build_model_analysis_schema(photo_roles: Sequence[str]) -> dict[str, Any]:
     """Build the strict response schema with provenance limited to sent roles."""
     if not photo_roles or len(set(photo_roles)) != len(photo_roles):
         raise ValueError("photo roles must be non-empty and unique")
 
-    provenance = {
-        "type": "array",
-        "items": {"type": "string", "enum": list(photo_roles)},
-    }
-    conflict = _object_schema(
-        {
-            "value": {"type": "string", "minLength": 1},
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-            "provenance": provenance,
+    vocabulary = DepopVocabulary()
+
+    def fact_schema(field_name: str) -> dict[str, Any]:
+        provenance = {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": _allowed_provenance_roles(field_name, photo_roles),
+            },
         }
-    )
-    fact = _object_schema(
-        {
-            "value": {"type": ["string", "null"]},
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-            "provenance": provenance,
-            "needs_review": {"type": "boolean"},
-            "evidence": {"type": ["string", "null"]},
-            "conflicts": {"type": "array", "items": conflict},
-        }
-    )
+        conflict = _object_schema(
+            {
+                "value": _controlled_value_schema(field_name, vocabulary),
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "provenance": provenance,
+            }
+        )
+        return _object_schema(
+            {
+                "value": _controlled_value_schema(field_name, vocabulary),
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "provenance": provenance,
+                "needs_review": {"type": "boolean"},
+                "evidence": {"type": ["string", "null"]},
+                "conflicts": {"type": "array", "items": conflict},
+            }
+        )
     return _object_schema(
         {
             "schema_version": {"type": "integer", "const": SCHEMA_VERSION},
@@ -166,7 +234,7 @@ def build_model_analysis_schema(photo_roles: Sequence[str]) -> dict[str, Any]:
                     },
                 }
             ),
-            "facts": _object_schema({name: fact for name in FACT_NAMES}),
+            "facts": _object_schema({name: fact_schema(name) for name in FACT_NAMES}),
             "warnings": {"type": "array", "items": {"type": "string"}},
         }
     )
@@ -257,6 +325,22 @@ def _validate_provenance(value: Any, roles: set[str] | None, location: str) -> N
         raise VisionResponseError("invalid_schema", f"{location} contains an unsupplied role")
 
 
+def _validate_value(field_name: str, value: Any, location: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise VisionResponseError("invalid_schema", f"{location} is invalid")
+    if value.casefold().strip() in NULL_PLACEHOLDERS:
+        raise VisionResponseError("invalid_schema", f"{location} must use JSON null")
+    vocabulary_field = CONTROLLED_FACT_VOCABULARIES.get(field_name)
+    if vocabulary_field is not None:
+        allowed = set(DepopVocabulary().values(vocabulary_field))
+        if vocabulary_field == "color":
+            allowed.add("gray")
+        if value not in allowed:
+            raise VisionResponseError("invalid_schema", f"{location} is not an exact supported value")
+
+
 def validate_model_analysis(
     analysis: Any,
     *,
@@ -286,7 +370,6 @@ def validate_model_analysis(
     )
 
     facts = _require_exact_keys(top["facts"], set(FACT_NAMES), "facts")
-    roles = set(photo_roles) if photo_roles is not None else None
     fact_keys = {
         "value",
         "confidence",
@@ -297,10 +380,14 @@ def validate_model_analysis(
     }
     for name, raw_fact in facts.items():
         fact = _require_exact_keys(raw_fact, fact_keys, f"facts.{name}")
-        if fact["value"] is not None and not isinstance(fact["value"], str):
-            raise VisionResponseError("invalid_schema", f"facts.{name}.value is invalid")
+        _validate_value(name, fact["value"], f"facts.{name}.value")
         _validate_number(fact["confidence"], f"facts.{name}.confidence")
-        _validate_provenance(fact["provenance"], roles, f"facts.{name}.provenance")
+        allowed_roles = set(_allowed_provenance_roles(name, photo_roles or ()))
+        _validate_provenance(
+            fact["provenance"],
+            allowed_roles if photo_roles is not None else None,
+            f"facts.{name}.provenance",
+        )
         if not isinstance(fact["needs_review"], bool):
             raise VisionResponseError("invalid_schema", f"facts.{name}.needs_review is invalid")
         if fact["evidence"] is not None and not isinstance(fact["evidence"], str):
@@ -314,10 +401,15 @@ def validate_model_analysis(
                 {"value", "confidence", "provenance"},
                 location,
             )
-            if not isinstance(conflict["value"], str) or not conflict["value"].strip():
+            _validate_value(name, conflict["value"], f"{location}.value")
+            if conflict["value"] is None:
                 raise VisionResponseError("invalid_schema", f"{location}.value is invalid")
             _validate_number(conflict["confidence"], f"{location}.confidence")
-            _validate_provenance(conflict["provenance"], roles, f"{location}.provenance")
+            _validate_provenance(
+                conflict["provenance"],
+                allowed_roles if photo_roles is not None else None,
+                f"{location}.provenance",
+            )
 
     _validate_string_list(top["warnings"], "warnings")
     return dict(top)
@@ -398,32 +490,27 @@ def _transient_failure(error: BaseException) -> tuple[str, str] | None:
     return None
 
 
-def analyze_images(
-    item_photos: Sequence[str | Path],
-    tag_photo: str | Path,
+def run_structured_vision_call(
+    request: Mapping[str, Any],
+    response_parser: Callable[[Any], Mapping[str, Any]],
     *,
     client: Any | None = None,
     environ: Mapping[str, str] | None = None,
     clock: Any = time.perf_counter,
     sleep: Any = time.sleep,
 ) -> VisionCallResult:
-    """Call the real Responses API with bounded, transient-only retries."""
+    """Execute one strict vision request with shared authentication and retries."""
     api_key = _required_api_key(environ)
     sdk_client = client if client is not None else _create_sdk_client(api_key)
-    request = build_vision_request(item_photos, tag_photo)
-    roles = tuple(
-        [f"item_photo_{index}" for index in range(1, len(item_photos) + 1)]
-        + ["tag_photo"]
-    )
     started_at = clock()
 
     for attempt in range(1, MAX_RETRIES + 2):
         try:
             response = sdk_client.responses.create(
-                **request,
+                **dict(request),
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
-            analysis = parse_model_response(response, photo_roles=roles)
+            analysis = response_parser(response)
             return VisionCallResult(
                 analysis=analysis,
                 metadata=_success_metadata(
@@ -453,3 +540,28 @@ def analyze_images(
             ) from error
 
     raise AssertionError("bounded retry loop ended unexpectedly")
+
+
+def analyze_images(
+    item_photos: Sequence[str | Path],
+    tag_photo: str | Path,
+    *,
+    client: Any | None = None,
+    environ: Mapping[str, str] | None = None,
+    clock: Any = time.perf_counter,
+    sleep: Any = time.sleep,
+) -> VisionCallResult:
+    """Call the real Responses API with bounded, transient-only retries."""
+    request = build_vision_request(item_photos, tag_photo)
+    roles = tuple(
+        [f"item_photo_{index}" for index in range(1, len(item_photos) + 1)]
+        + ["tag_photo"]
+    )
+    return run_structured_vision_call(
+        request,
+        lambda response: parse_model_response(response, photo_roles=roles),
+        client=client,
+        environ=environ,
+        clock=clock,
+        sleep=sleep,
+    )

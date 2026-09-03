@@ -68,6 +68,13 @@ class DepopVocabularyTests(unittest.TestCase):
         self.assertEqual(self.vocabulary.require_size(category, '30"'), '30"')
         self.assertEqual(self.vocabulary.require_size(category, "30"), "30")
 
+    def test_plain_numeric_jeans_size_is_normalized_to_waist_inches(self) -> None:
+        mens_jeans = "Men >> Bottoms >> Jeans (menswear, bottoms, jeans)"
+        womens_jeans = "Women >> Bottoms >> Jeans (womenswear, bottoms, jeans)"
+
+        self.assertEqual(self.vocabulary.match_size(mens_jeans, "32"), '32"')
+        self.assertEqual(self.vocabulary.match_size(womens_jeans, "32"), '32"')
+
     def test_rejects_fields_without_a_dropdown_vocabulary(self) -> None:
         with self.assertRaises(UnsupportedDepopFieldError):
             self.vocabulary.values("price")

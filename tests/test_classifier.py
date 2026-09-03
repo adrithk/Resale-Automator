@@ -14,6 +14,7 @@ import numpy as np
 
 from classifier import (
     build_quality_warnings,
+    discover_photo_folder,
     load_image,
     main,
     measure_blur_score,
@@ -23,7 +24,14 @@ from classifier import (
     validate_image_file,
     validate_inputs,
 )
-from openai_vision import FACT_NAMES, VisionCallResult, VisionProviderError
+from openai_vision import (
+    FACT_NAMES,
+    VisionCallResult,
+    VisionConfigurationError,
+    VisionProviderError,
+)
+from photo_role_detection import resolve_proposed_roles
+from review import ReviewCancelled
 
 TEST_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -76,7 +84,210 @@ def fake_vision_result(tag_status: str = "unreadable") -> VisionCallResult:
     )
 
 
+def fake_photo_role_result(tag_confidence: float = 0.95) -> VisionCallResult:
+    return VisionCallResult(
+        analysis={
+            "schema_version": 1,
+            "assignments": [
+                {
+                    "photo_id": "photo_1",
+                    "visual_role": "back_view",
+                    "confidence": 0.8,
+                    "tag_likelihood": 0.05,
+                    "evidence": "Back view.",
+                },
+                {
+                    "photo_id": "photo_2",
+                    "visual_role": "tag_photo",
+                    "confidence": tag_confidence,
+                    "tag_likelihood": 0.99,
+                    "evidence": "Close-up tag.",
+                },
+                {
+                    "photo_id": "photo_3",
+                    "visual_role": "front_view",
+                    "confidence": 0.9,
+                    "tag_likelihood": 0.02,
+                    "evidence": "Front view.",
+                },
+            ],
+            "warnings": [],
+        },
+        metadata={
+            "response_id": "resp_roles",
+            "model": "gpt-5.6-luna",
+            "usage": {"input_tokens": 5, "output_tokens": 6, "total_tokens": 11},
+            "latency_ms": 10.0,
+            "attempts": 1,
+        },
+    )
+
+
 class InputValidationTests(unittest.TestCase):
+    def test_discovers_supported_folder_photos_in_stable_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            for name in ("Z.png", "a.jpeg", "m.webp"):
+                write_test_image(directory / name)
+            (directory / ".DS_Store").write_text("ignored")
+            (directory / "notes.txt").write_text("ignored")
+
+            photos, errors = discover_photo_folder(str(directory))
+
+        self.assertEqual(errors, [])
+        self.assertEqual([Path(photo).name for photo in photos], ["a.jpeg", "m.webp", "Z.png"])
+
+    def test_folder_requires_three_decodable_supported_images(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            write_test_image(directory / "one.png")
+            write_test_image(directory / "two.png")
+
+            photos, errors = discover_photo_folder(str(directory))
+
+        self.assertEqual(len(photos), 2)
+        self.assertIn("at least three", errors[0])
+
+    def test_folder_mode_auto_routes_high_confidence_photo_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            for name in ("a.png", "b.png", "c.png"):
+                write_test_image(directory / name)
+            role_result = fake_photo_role_result()
+            role_runner = mock.Mock(return_value=role_result)
+            role_review_runner = mock.Mock()
+            classifier_runner = mock.Mock(return_value=fake_vision_result())
+            output = io.StringIO()
+
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    ["--photo-folder", str(directory)],
+                    photo_role_runner=role_runner,
+                    photo_role_review_runner=role_review_runner,
+                    vision_runner=classifier_runner,
+                )
+
+            result = json.loads(output.getvalue())
+            discovered = role_runner.call_args.args[0]
+            routed_items, routed_tag = classifier_runner.call_args.args
+
+        self.assertEqual(exit_code, 4)
+        self.assertEqual([Path(photo).name for photo in discovered], ["a.png", "b.png", "c.png"])
+        self.assertEqual([Path(photo).name for photo in routed_items], ["c.png", "a.png"])
+        self.assertEqual(Path(routed_tag).name, "b.png")
+        self.assertEqual(result["photo_role_metadata"]["response_id"], "resp_roles")
+        self.assertEqual(
+            Path(result["photo_role_detection"]["resolved_roles"]["tag_photo"]).name,
+            "b.png",
+        )
+        self.assertEqual(
+            result["photo_role_detection"]["resolution"]["mode"],
+            "automatic_high_confidence",
+        )
+        self.assertEqual(
+            result["photo_role_detection"]["resolution"]["review_threshold"],
+            0.6,
+        )
+        role_review_runner.assert_not_called()
+
+    def test_folder_mode_reviews_photo_roles_below_sixty_percent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            for name in ("a.png", "b.png", "c.png"):
+                write_test_image(directory / name)
+            role_result = fake_photo_role_result(tag_confidence=0.59)
+            reviewed_roles = resolve_proposed_roles(
+                [str(directory / name) for name in ("a.png", "b.png", "c.png")],
+                role_result.analysis,
+            )
+            role_review_runner = mock.Mock(return_value=reviewed_roles)
+            output = io.StringIO()
+
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    ["--photo-folder", str(directory)],
+                    photo_role_runner=lambda photos: role_result,
+                    photo_role_review_runner=role_review_runner,
+                    vision_runner=lambda item_photos, tag_photo: fake_vision_result(),
+                )
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 4)
+        role_review_runner.assert_called_once()
+        self.assertEqual(
+            result["photo_role_detection"]["resolution"]["mode"],
+            "user_reviewed_low_confidence",
+        )
+
+    def test_folder_mode_cannot_mix_with_explicit_roles(self) -> None:
+        role_runner = mock.Mock()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(
+                ["--photo-folder", "/tmp/photos", "--item", "/tmp/item.png"],
+                photo_role_runner=role_runner,
+            )
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "input_error")
+        self.assertIn("by itself", result["errors"][0])
+        role_runner.assert_not_called()
+
+    def test_folder_role_provider_error_stops_before_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            for name in ("a.png", "b.png", "c.png"):
+                write_test_image(directory / name)
+            classifier_runner = mock.Mock()
+            output = io.StringIO()
+
+            def missing_key(photos):
+                raise VisionConfigurationError(
+                    "missing_api_key",
+                    "Set OPENAI_API_KEY before running hosted vision analysis.",
+                )
+
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    ["--photo-folder", str(directory)],
+                    photo_role_runner=missing_key,
+                    vision_runner=classifier_runner,
+                )
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(result["status"], "configuration_error")
+        self.assertEqual(result["error"]["code"], "missing_api_key")
+        classifier_runner.assert_not_called()
+
+    def test_folder_role_review_can_cancel_before_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            for name in ("a.png", "b.png", "c.png"):
+                write_test_image(directory / name)
+            classifier_runner = mock.Mock()
+            output = io.StringIO()
+
+            def cancel_review(photos, analysis):
+                raise ReviewCancelled("cancelled")
+
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    ["--photo-folder", str(directory)],
+                    photo_role_runner=lambda photos: fake_photo_role_result(
+                        tag_confidence=0.59
+                    ),
+                    photo_role_review_runner=cancel_review,
+                    vision_runner=classifier_runner,
+                )
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "review_cancelled")
+        self.assertEqual(result["review_stage"], "photo_roles")
+        classifier_runner.assert_not_called()
+
     def test_requires_at_least_two_item_photos(self) -> None:
         errors = validate_inputs(["one.jpg"], "tag.jpg")
 
@@ -300,6 +511,87 @@ class InputValidationTests(unittest.TestCase):
         self.assertEqual(result["status"], "review_required")
         self.assertIsNotNone(result["validated_facts"])
         self.assertIsNone(result["listing_draft"])
+
+    def test_review_mode_returns_approved_facts_and_listing_draft(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = [Path(temporary_directory) / name for name in ("front.png", "back.png", "tag.png")]
+            for path in paths:
+                write_test_image(path)
+            approved = {
+                "category": "Men >> Bottoms >> Jeans (menswear, bottoms, jeans)",
+                "item_type": "Jeans",
+                "brand": "Levi's (levi-s)",
+                "condition": "Used - Good (used_good)",
+                "size": '36"',
+                "inseam": '34"',
+                "primary_color": "Black (black)",
+            }
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "--item", str(paths[0]), "--item", str(paths[1]),
+                        "--tag", str(paths[2]), "--review",
+                    ],
+                    vision_runner=lambda item_photos, tag_photo: fake_vision_result("readable"),
+                    review_runner=lambda facts: approved,
+                    listing_review_runner=lambda draft: draft,
+                    output_directory=Path(temporary_directory) / "approved_listings",
+                )
+
+            result = json.loads(output.getvalue())
+            saved_path = Path(result["saved_to"])
+            saved = json.loads(saved_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "listing_approved")
+        self.assertEqual(result["approved_facts"], approved)
+        self.assertIn('34" inseam', result["listing_draft"]["description"])
+        self.assertEqual(result["review_reasons"], [])
+        self.assertEqual(result["next_step"], "export_later")
+        self.assertEqual(saved, result)
+        self.assertRegex(saved_path.name, r"^approved-listing-[0-9a-f]{32}\.json$")
+
+    def test_review_mode_automatically_uses_a_unique_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            paths = [directory / name for name in ("front.png", "back.png", "tag.png")]
+            for path in paths:
+                write_test_image(path)
+            output_directory = directory / "approved_listings"
+            approved = {
+                "category": "Men >> Bottoms >> Jeans (menswear, bottoms, jeans)",
+                "item_type": "Jeans",
+                "brand": "Levi's (levi-s)",
+                "condition": "Used - Good (used_good)",
+                "size": '36"',
+                "inseam": '34"',
+                "primary_color": "Black (black)",
+            }
+            arguments = [
+                "--item", str(paths[0]), "--item", str(paths[1]),
+                "--tag", str(paths[2]), "--review",
+            ]
+            saved_paths: list[Path] = []
+
+            for _ in range(2):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    exit_code = main(
+                        arguments,
+                        vision_runner=lambda item_photos, tag_photo: fake_vision_result("readable"),
+                        review_runner=lambda facts: approved,
+                        listing_review_runner=lambda draft: draft,
+                        output_directory=output_directory,
+                    )
+                result = json.loads(output.getvalue())
+                saved_paths.append(Path(result["saved_to"]))
+                self.assertEqual(exit_code, 0)
+                self.assertEqual(result["status"], "listing_approved")
+
+            self.assertNotEqual(saved_paths[0], saved_paths[1])
+            self.assertTrue(all(path.is_file() for path in saved_paths))
+            self.assertEqual(len(list(output_directory.glob("*.json"))), 2)
 
     def test_missing_api_key_is_a_structured_configuration_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

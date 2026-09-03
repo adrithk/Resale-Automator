@@ -1,12 +1,24 @@
 # GPT-5.6 Luna Integration Plan
 
-Status: implemented (Chunks 1 through 4 complete).
+Status: implemented, with post-smoke vocabulary and provenance hardening.
 
 This document is the implementation record for the hosted-vision milestone. It
 records the decisions, boundaries, sequence, tests, and completion criteria used
 to connect the Python command-line prototype to the real hosted OpenAI vision
 API. The integration described here now exists; later listing-generation,
 pricing, export, and marketplace phases remain outside its scope.
+
+An optional unordered-folder pre-stage is implemented in
+`photo_role_detection.py`. It sends each supported top-level image under a
+neutral ID, uses the same exact hosted model and operational boundaries, and
+returns strict front/back/detail/tag assignments with confidence and independent
+tag likelihood. Python verifies exact one-time coverage of every supplied ID,
+proposes one tag deterministically, and calculates conservative selected-tag
+confidence as the lower of assignment confidence and tag likelihood. A result
+at or above 60% proceeds automatically; only a lower result requires user
+confirmation or numbered correction before garment analysis. This policy is the
+future website boundary as well. The original explicit `--item`/`--tag` path
+remains available.
 
 ## Confirmed decisions
 
@@ -26,6 +38,12 @@ pricing, export, and marketplace phases remain outside its scope.
   stages.
 - Do not add pricing, a database, CSV/spreadsheet export, a website, browser
   automation, or listing publication in this milestone.
+- The first successful hosted run is retained only as a sanitized regression
+  fixture. It revealed that generic category labels and free-form controlled
+  fields cause review requirements despite a successful API response. The
+  strict schema now enumerates controlled values, uses field-specific sent-role
+  provenance, and rejects literal placeholder strings; no additional live call
+  was made for this hardening work.
 
 Official references:
 
@@ -76,6 +94,49 @@ contract when needed.
    must require review rather than being coerced.
 9. Return structured candidate and validated data. Do not generate description,
    title, price, CSV, spreadsheet rows, or marketplace actions yet.
+
+Post-smoke hardening retains this order at both boundaries: the provider schema
+requires an exact category upload value (or `null`), then Python maps Category
+before it attempts Size. Unsupported Style descriptions remain explicit unknown
+review facts; they are not reinterpreted as Style values.
+
+For resolved jeans categories, structured tag labels such as `W36 L34`,
+`32x34`, and `Waist × Length 32 × 34 inch` are parsed deterministically into
+the exact Depop waist size and internal validated inseam for description
+wording. The hosted prompt explicitly requests normalized `W{waist} L{length}`
+output and prohibits dropping either visible measurement. Review-flagged Age stays
+blank instead of inferring `Modern`; exact non-conflicting Style values may be
+retained even when the model reports low confidence.
+
+The hosted instruction asks for up to three distinct exact Style candidates
+when supported by visible garment evidence. Lower confidence alone may still
+produce a candidate, while unsupported descriptive traits and unused slots stay
+`null`; Python remains the exact-mapping boundary.
+
+The next terminal-review milestone uses `review_validation.py` as a provider-
+independent final boundary. Human edits cannot become approved facts until
+required values, exact dropdown/Brand mapping, Category-dependent Size, and
+numeric Inseam have all passed deterministic validation.
+For a resolved jeans category, a bare numeric human Size edit is treated as a
+waist measurement and normalized to Depop's quoted inch value; other category
+size vocabularies remain unchanged.
+`classifier.py --review` now provides that interactive terminal boundary. It
+re-prompts invalid fields locally, requires explicit approval, and returns plain
+canonical approved facts while leaving listing generation separate.
+
+The subsequent listing milestone is implemented in `listing_generation.py`.
+It revalidates approved facts and deterministically builds editable title and
+description text. Size is excluded from the title but retained in the
+description along with validated Inseam; blank optional facts are omitted. This
+does not make another model request.
+The terminal flow separately reviews and approves the non-empty generated title
+and description. Every approved result is automatically saved to a random,
+UUID-named JSON file in `approved_listings/`, using exclusive creation so
+existing data is never overwritten.
+
+Offline regressions cover each controlled vocabulary family, the documented
+`gray` alias, generic-category rejection, tag-only Brand/Size provenance,
+item-only Condition/visible-field provenance, and actual JSON `null` handling.
 
 ## Proposed model-analysis schema
 
