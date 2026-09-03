@@ -29,16 +29,39 @@ The initial pipeline will be:
 6. Store internal analysis results as JSON so lists, warnings, confidence, and provenance remain structured.
 7. Add CSV only later as an export format for reviewed and approved listings.
 
+## Selected vision model and next milestone
+
+The selected first production model is the hosted OpenAI API model
+`gpt-5.6-luna`. The choice prioritizes low usage cost while retaining image
+input and Structured Outputs. This is a hosted API decision: the project will
+not run model weights locally. The exact model ID must be used rather than the
+`gpt-5.6` alias, because that alias targets a different model tier.
+
+The integration is **planned but not implemented**. The current CLI stops after
+image-quality analysis and does not make network requests. The next milestone
+will use the Responses API to send the separately identified tag photo and all
+item photos, obtain schema-constrained candidate facts, enforce the readable-tag
+gate, and pass only supported facts into the existing Python validation and
+Depop vocabulary layers. Listing-text generation remains a later, separate
+step.
+
+[`MODEL_INTEGRATION_PLAN.md`](MODEL_INTEGRATION_PLAN.md) contains the detailed
+implementation sequence, acceptance criteria, and a prompt intended for a new
+LLM context window. Official API references used by that plan are the
+[GPT-5.6 Luna model page](https://developers.openai.com/api/docs/models/gpt-5.6-luna),
+[Images and vision guide](https://developers.openai.com/api/docs/guides/images-vision),
+and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
+
 The first prototype will not include a website, database, pricing system,
 spreadsheet export, or marketplace automation. Pricing is planned as a later,
 separate phase that will recommend a selling price from validated facts and
 market-comparable data for user review.
 
-The provisional mapping from classifier facts to the supplied listing-template
+The mapping from classifier facts to the supplied listing-template
 columns is maintained in [`FIELD_CONTRACT.md`](FIELD_CONTRACT.md). It records
 which fields are required, recommended, optional, deferred, excluded, or still
-unresolved. Only confirmed universal validation rules are currently enforced in
-Python.
+unresolved. Confirmed Depop template vocabularies are maintained separately
+from image analysis and listing generation.
 
 ## Current structured-data contract
 
@@ -72,9 +95,25 @@ currently enforces only confirmed universal rules:
 - Condition comes from visible item-photo evidence or explicit user input.
 - Conflicting evidence requires review.
 
-The CLI does not populate `model_analysis` or `validated_facts` yet. Category,
-condition, age, and style vocabularies and field-specific listing-readiness
-requirements remain provisional and are not enforced.
+The CLI does not populate `model_analysis` or `validated_facts` yet. Selecting
+GPT-5.6 Luna did not change this implemented behavior.
+
+## Depop destination vocabulary
+
+`depop_vocab.py` provides deterministic matching against a versioned snapshot
+of Depop bulk-listing template version 6. The snapshot includes 319 categories,
+14,038 brands, five conditions, 19 colors, eight sources, eight ages, 32 styles,
+664 locations, and the template's category-dependent size groups.
+
+The mapper keeps a human-readable label separate from its canonical identifier
+and exact upload value. It accepts labels, identifiers, exact upload values, and
+explicitly documented aliases such as `gray` to `Grey`. It does not use fuzzy
+matching: missing or ambiguous values require review instead of being guessed.
+Size validation requires a resolved Category first.
+
+This mapping layer is available to later pipeline stages but is not yet called
+by the current image-quality CLI. It uses only Python's standard library; the
+runtime does not read the source spreadsheet.
 
 ## Run the current prototype
 

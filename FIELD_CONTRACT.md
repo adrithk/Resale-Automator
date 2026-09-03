@@ -1,9 +1,15 @@
 # Listing Field Contract
 
-Status: provisional and editable. Phase III Python structures enforce only the
-confirmed universal provenance and uncertainty rules described below; template
-priorities and unresolved vocabularies are not enforced as listing-readiness
-rules.
+Status: editable. The destination vocabularies below were confirmed from Depop
+bulk-listing template version 6. Phase III Python structures enforce the
+universal provenance and uncertainty rules described below; the remaining
+listing-readiness decisions are not yet enforced.
+
+The planned vision-model integration uses hosted `gpt-5.6-luna`, but model
+selection does not change this contract: model output is candidate evidence,
+not a validated listing value. Python must continue to enforce provenance,
+unknown values, conflicts, the readable-tag gate, and exact destination
+mapping. See `MODEL_INTEGRATION_PLAN.md` for the implementation boundary.
 
 This document maps the supplied upload-template columns to the first backend
 milestone. It is the reference for deciding what the classifier extracts, what
@@ -24,20 +30,20 @@ the user supplies, and what stays out of scope.
 | Template field | First milestone | Allowed source | Reason or rule |
 | --- | --- | --- | --- |
 | Description | Required | Listing generator using validated facts only | Must be succinct and reviewed by the user. |
-| Category | Required | Vision model, then Python validation and user review | Uses an editable category taxonomy that is still to be defined. |
+| Category | Required | Vision model, then exact Depop mapping and user review | Must map to one of the 319 template values, including its canonical identifier. |
 | Price | Deferred | Future pricing system using validated facts and market-comparable data | Recommend a reasonable selling price in a later phase and require user review; do not guess a price during classification. |
 | Brand | Required | Readable tag, or explicit user correction | Never guess a brand from weak visual evidence. |
-| Condition | Required | Visible garment evidence, then user review | State only visible condition; do not infer hidden defects. |
-| Size | Required | Readable tag, or explicit user correction | Preserve the exact labeled size and never guess it. |
-| Color 1 | Required | Garment photos, then user review | Primary visible color. |
-| Color 2 | Recommended | Garment photos, then user review | Include only when a meaningful secondary color is visible. |
+| Condition | Required | Visible garment evidence, then exact Depop mapping and user review | Must use one of the five confirmed values; state only visible condition and do not infer hidden defects. |
+| Size | Required | Readable tag, or explicit user correction | Preserve the labeled size and map it only after Category selects the applicable size vocabulary. |
+| Color 1 | Required | Garment photos, then exact Depop mapping and user review | Primary visible color mapped to one of the 19 confirmed values. |
+| Color 2 | Recommended | Garment photos, then exact Depop mapping and user review | Include only when a meaningful secondary color maps to a confirmed value. |
 | Source 1 | Recommended | Item/tag evidence or user input, then review | First applicable Depop source value from the confirmed vocabulary below. |
 | Source 2 | Optional | Item/tag evidence or user input, then review | Second applicable Depop source value; omit when only one applies. |
-| Age | Recommended | Tag/item evidence or user input, then review | Use `unknown` rather than guessing an era or age. |
-| Style 1 | Recommended | Garment photos, then user review | Primary style tag from an editable vocabulary. |
-| Style 2 | Optional | Garment photos, then user review | Additional style tag only when well supported. |
-| Style 3 | Optional | Garment photos, then user review | Additional style tag only when well supported. |
-| Location | Deferred | User or future inventory settings | Operational inventory data, not a classifier fact. |
+| Age | Recommended | Tag/item evidence or user input, then exact Depop mapping and review | Use one of the eight confirmed values or `unknown`; never guess an era or age. |
+| Style 1 | Recommended | Garment photos, then exact Depop mapping and user review | Primary style tag from the 32 confirmed values. |
+| Style 2 | Optional | Garment photos, then exact Depop mapping and user review | Additional confirmed style tag only when well supported. |
+| Style 3 | Optional | Garment photos, then exact Depop mapping and user review | Additional confirmed style tag only when well supported. |
+| Location | Deferred | User or future inventory settings | Operational inventory data selected from the 664 template values, not a classifier fact. |
 | Picture Hero URL | Deferred | Future upload/storage step | The current CLI uses a local hero-photo path; URL creation comes later. |
 | Picture 2 URL | Deferred | Future upload/storage step | At least two local item photos are required now; URL creation comes later. |
 | Picture 3 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
@@ -52,6 +58,36 @@ the user supplies, and what stays out of scope.
 
 The separately identified tag photo is an analysis input. It must not be placed
 into a public picture URL field automatically.
+
+The template guide permits uploading listing information without photos and
+adding photos later while completing the resulting Depop drafts. The picture
+URL fields therefore remain deferred and are not classifier requirements.
+
+## Confirmed destination vocabularies
+
+The version 6 template contains exact display values followed by canonical
+identifiers in parentheses. Destination mapping must preserve both parts for
+upload. A future model may propose ordinary human-readable text, but Python
+must perform the final deterministic match.
+
+- **Category:** 319 values across Everything else, Kids, Men, and Women.
+- **Brand:** 14,038 searchable values.
+- **Condition:** `Brand new`, `Like new`, `Used - Excellent`, `Used - Fair`,
+  and `Used - Good`.
+- **Color:** `Black`, `Blue`, `Brown`, `Burgundy`, `Cream`, `Gold`, `Green`,
+  `Grey`, `Khaki`, `Multi`, `Navy`, `Orange`, `Pink`, `Purple`, `Red`,
+  `Silver`, `Tan`, `White`, and `Yellow`.
+- **Age:** `00s`, `50s`, `60s`, `70s`, `80s`, `90s`, `Antique`, and
+  `Modern`.
+- **Style:** 32 confirmed values maintained in the versioned vocabulary data.
+- **Location:** 664 confirmed values; selection remains a later user or
+  inventory-setting responsibility.
+
+Size is dependent on Category. The template maps 216 categories to 13 size
+groups, covering general letter sizes, numbered clothing sizes, waist sizes,
+bra sizes, adult footwear, children’s ages, children’s footwear, `One size`,
+and `Other`. Category must be resolved before Size can be validated. A labeled
+size that does not map cleanly must require review rather than being coerced.
 
 ## Confirmed Source vocabulary
 
@@ -104,10 +140,11 @@ upload-system requirements are confirmed.
 confidence. Conflicting claims retain their own value, confidence, and
 provenance and require review.
 
-The candidate internal fact names are `category`, `item_type`, `brand`,
-`condition`, `size`, `primary_color`, `secondary_color`, `age`, `style_1`,
-`style_2`, and `style_3`. These names do not themselves enforce the provisional
-template priorities above.
+The currently implemented candidate internal fact names are `category`,
+`item_type`, `brand`, `condition`, `size`, `primary_color`, `secondary_color`,
+`age`, `style_1`, `style_2`, and `style_3`. The model-integration milestone must
+add `source_1` and `source_2` to the Python contract before validating those
+fields. These names do not themselves enforce the template priorities above.
 
 Brand and size currently accept only `tag_photo` or `user_correction`
 provenance. Condition accepts numbered item-photo evidence, `user_input`, or
@@ -120,11 +157,7 @@ decide tag readability or generate listing text.
 
 ## Decisions still needed
 
-Before enforcing this contract in Python, confirm:
+Before enforcing complete-listing readiness, confirm:
 
-1. The exact allowed values for Category.
-2. The exact allowed values for Condition.
-3. Whether Size is always required or can be `unknown` after user review.
-4. The allowed Age and Style vocabularies.
-5. Which picture URL fields the destination upload system requires.
-6. Where `draft_title` maps in the destination system.
+1. Whether Size is always required or can remain `unknown` after user review.
+2. Where `draft_title` maps in the destination system.

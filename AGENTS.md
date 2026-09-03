@@ -10,8 +10,11 @@
 - Start with a Python command-line backend prototype; do not introduce a website or JavaScript stack unless the user explicitly asks.
 - For the first milestone, accept at least two item photos and one separately identified tag photo.
 - Use OpenCV only for measurable image-quality checks such as resolution, blur, lighting, and possible glare. Use a pretrained vision model for garment understanding and tag extraction; do not plan custom model training for the first milestone.
+- The selected first vision provider is the hosted OpenAI API using `gpt-5.6-luna`; do not substitute a local model, a different hosted model, or the `gpt-5.6` alias without explicit user approval. Use the Responses API, image inputs, and strict Structured Outputs. The integration is planned but not yet implemented.
+- Treat `MODEL_INTEGRATION_PLAN.md` as the implementation handoff for the next milestone. Keep the real API in the runtime path; deterministic saved response fixtures or mocked network calls are permitted only in tests and are not a fake runtime provider.
 - Keep image analysis, validated clothing facts, and listing-text generation as separate steps. Generate listing text only from validated facts.
 - Treat `FIELD_CONTRACT.md` as the editable source of truth for listing-field priority, provenance, and deferred upload fields. Do not enforce unresolved fields in code until the user confirms their meaning or allowed values.
+- Keep Depop destination mapping deterministic and separate from model output. Use the versioned vocabulary data, resolve Category before Size, and require review instead of fuzzy-guessing missing or ambiguous values.
 - Use JSON for internal structured results, including warnings, uncertainty, confidence, and provenance. Treat CSV as a later export format for reviewed and approved listings.
 - Keep listing generation separate from marketplace browser automation.
 - Require a readable tag photo before generating a listing. Never guess tag-derived facts when the tag is missing or unreadable; return useful retake instructions instead.
