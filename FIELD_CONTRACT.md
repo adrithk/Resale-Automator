@@ -5,7 +5,8 @@ bulk-listing template version 6. Python structures now enforce the universal
 provenance and uncertainty rules described below. The hosted-model boundary
 constrains candidate output to the documented schema, and the candidate
 validation layer applies the readable-tag gate and exact destination mapping.
-Complete-listing readiness decisions remain unresolved and are not enforced.
+Final review validation enforces the required listing facts before approval;
+destination-specific export questions remain unresolved.
 
 The hosted integration is implemented and covered by offline fixtures and
 mocked networking. Its optional live smoke tests use user-supplied photos and
@@ -41,7 +42,7 @@ the user supplies, and what stays out of scope.
 | Brand | Required | Readable tag, or explicit user correction | Never guess a brand from weak visual evidence. |
 | Condition | Required | Visible garment evidence, then exact Depop mapping and user review | Must use one of the five confirmed values; state only visible condition and do not infer hidden defects. |
 | Size | Required | Readable tag, or explicit user correction | Map jeans labels such as `W36 L34`, `32x34`, or `Waist × Length 32 × 34 inch` by waist only after Category resolves; during review, a bare number such as `32` means waist inches and is stored as `32"`. Retain the parsed inseam for description wording. |
-| Inseam (internal) | Optional | Readable tag, or explicit user correction | Retained tag evidence such as `34"`; it is not a Depop upload field and will be used only by a future listing-description step. |
+| Inseam (internal) | Optional | Readable tag, or explicit user correction | Retained tag evidence such as `34"`; it is not a Depop upload field and is included in the generated description when present. |
 | Color 1 | Required | Garment photos, then exact Depop mapping and user review | Primary visible color mapped to one of the 19 confirmed values. |
 | Color 2 | Recommended | Garment photos, then exact Depop mapping and user review | Include only when a meaningful secondary color maps to a confirmed value. |
 | Source 1 | Recommended | Item/tag evidence or user input, then review | First applicable Depop source value from the confirmed vocabulary below. |
@@ -63,8 +64,9 @@ the user supplies, and what stays out of scope.
 | International Shipping price | Excluded | User or future shipping settings | Shipping prices are explicitly outside the first milestone. |
 | SKU | Excluded | None | The user confirmed that SKU is not necessary. |
 
-The separately identified tag photo is an analysis input. It must not be placed
-into a public picture URL field automatically.
+The resolved tag photo—whether explicitly supplied or selected by unordered
+folder role detection—is an analysis input. It must not be placed into a public
+picture URL field automatically.
 
 The template guide permits uploading listing information without photos and
 adding photos later while completing the resulting Depop drafts. The picture
@@ -110,7 +112,7 @@ are:
 - `Designer`
 - `Repaired`
 
-The classifier may eventually propose up to two supported values, but each
+The classifier may propose up to two supported values, but each
 proposal must retain evidence and remain subject to user review. It must not
 infer a source merely to fill the optional second field.
 
@@ -151,17 +153,19 @@ If a required fact is missing, return a review requirement instead of inventing
 text. Description wording and field priorities may be revised when the actual
 upload-system requirements are confirmed.
 
-## Implemented Phase III boundary
+## Implemented backend boundary
 
 `contracts.py` represents each known fact with `value`, `confidence`,
 `provenance`, and `needs_review`. Unknown facts use a `null` value and zero
 confidence. Conflicting claims retain their own value, confidence, and
 provenance and require review.
 
-The currently implemented candidate internal fact names are `category`,
+The provider candidate fact names are `category`,
 `item_type`, `brand`, `condition`, `size`, `primary_color`, `secondary_color`,
 `source_1`, `source_2`, `age`, `style_1`, `style_2`, and `style_3`. These names
-do not themselves enforce the template priorities above.
+do not themselves enforce the template priorities above. A validated `inseam`
+may additionally be derived from a structured jeans size label or supplied
+during review.
 
 Brand and size currently accept only `tag_photo` or `user_correction`
 provenance. Condition accepts numbered item-photo evidence, `user_input`, or
@@ -170,10 +174,14 @@ contract can accommodate additional photo roles later.
 
 Raw `model_analysis`, `validated_facts`, and `listing_draft` remain separate
 pipeline stages. `openai_vision.py` builds, sends, and parses strict raw candidate
-analysis. `fact_validation.py` then blocks unreadable or uncertain tags,
+analysis. `pipeline_service.py` orchestrates local checks, optional folder-role
+detection, provider calls, and candidate validation without terminal I/O. A
+low-confidence tag role is returned as `photo_role_review_required`, not a
+cancellation; confirmed role selection can continue without another role call.
+`fact_validation.py` then blocks unreadable or uncertain tags,
 validates provenance, preserves unknown/conflicting review state, and maps
 controlled values exactly through `depop_vocab.py`, resolving Category before
-Size. The CLI now runs these stages after local validation. It leaves
+Size. The CLI adapter runs these stages after local validation. It leaves
 `validated_facts` and `listing_draft` null behind the tag gate. In `--review`
 mode, it generates listing prose only after final fact approval and keeps the
 draft separate for another explicit review.
@@ -203,9 +211,6 @@ The CLI exposes this boundary with `classifier.py --review`; it retries invalid
 fields locally and requires explicit confirmation before returning an approved
 result.
 
-## Decisions still needed
+## Decision still needed
 
-Before enforcing complete-listing readiness, confirm:
-
-1. Whether Size is always required or can remain `unknown` after user review.
-2. Where `draft_title` maps in the destination system.
+- Where `draft_title` maps in the destination system.

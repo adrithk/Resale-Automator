@@ -6,23 +6,24 @@ The planned workflow is:
 
 1. Upload item and tag photos.
 2. Verify that the tag is readable.
-3. Generate listing details and photo recommendations.
+3. Generate validated listing facts, listing text, and photo-quality guidance.
 4. Review and edit every field.
 5. Approve the listing.
 6. Export it or publish it through a marketplace adapter.
 
-## Initial implementation direction
+## Current implementation
 
-The project is in the early Python backend prototype stage. The current
-implementation runs from the command line in VS Code; a website will come
-later.
+The project is in the Python backend prototype stage. The implemented workflow
+runs from the command line, with its reusable Python pipeline now separated
+from the terminal adapter; a website and HTTP API remain separately authorized
+future milestones.
 
-The first milestone is one Python command that accepts either explicitly labeled
-photo paths or an unordered folder containing clothing photos and a tag photo,
-then returns structured clothing information and draft listing text or explains
-how to retake an unreadable tag photo.
+The current backend milestone provides one Python command that accepts either
+explicitly labeled photo paths or an unordered folder containing clothing
+photos and a tag photo, then returns structured clothing information and draft
+listing text or explains how to retake an unreadable tag photo.
 
-The initial pipeline will be:
+The implemented pipeline is:
 
 1. Validate the image files and require at least two item photos plus one tag photo. Folder mode discovers supported top-level images and identifies their roles first.
 2. Use OpenCV for basic image-quality checks such as resolution, blur, darkness, brightness, and glare warnings.
@@ -32,7 +33,7 @@ The initial pipeline will be:
 6. Store internal analysis results as JSON so lists, warnings, confidence, and provenance remain structured.
 7. Add CSV only later as an export format for reviewed and approved listings.
 
-## Selected vision model and next milestone
+## Selected vision model and backend status
 
 The selected first production model is the hosted OpenAI API model
 `gpt-5.6-luna`. The choice prioritizes low usage cost while retaining image
@@ -57,10 +58,13 @@ retaining the tag inseam as validated internal evidence for the description.
 The hosted prompt asks the model to preserve both measurements in normalized
 `W{waist} L{length}` form, while Python defensively accepts common `x` and `×`
 tag formats. After local
-validation and OpenCV checks succeed, `classifier.py` calls the real hosted API,
-captures non-secret request metadata, validates the candidates, and returns the
-combined stage-separated result. In interactive review mode, listing-text
-generation remains a separate step that runs only after final fact approval.
+validation and OpenCV checks succeed, `pipeline_service.py` calls the real
+hosted API, captures non-secret request metadata, validates the candidates, and
+returns the combined stage-separated result. `classifier.py` is a thin CLI
+adapter that parses arguments, invokes this service, runs terminal-only reviews,
+prints one JSON result, maps statuses to exit codes, and saves approved CLI
+listings. In interactive review mode, listing-text generation remains a separate
+step that runs only after final fact approval.
 
 [`MODEL_INTEGRATION_PLAN.md`](MODEL_INTEGRATION_PLAN.md) contains the detailed
 implementation sequence, acceptance criteria, and a prompt intended for a new
@@ -69,7 +73,7 @@ LLM context window. Official API references used by that plan are the
 [Images and vision guide](https://developers.openai.com/api/docs/guides/images-vision),
 and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
 
-The first prototype will not include a website, database, pricing system,
+The current prototype does not include a website, database, pricing system,
 spreadsheet export, or marketplace automation. Pricing is planned as a later,
 separate phase that will recommend a selling price from validated facts and
 market-comparable data for user review.
@@ -82,13 +86,14 @@ from image analysis and listing generation.
 
 ## Current structured-data contract
 
-Phase III adds standard-library Python contracts without calling a vision model
-or generating listing text. Command results now keep the pipeline stages
-separate:
+`PipelineResult` keeps local image analysis, raw model analysis, validated
+facts, and listing generation as separate stages. Later stages remain `null`
+when the command stops early; a successful reviewed run fills the applicable
+stages before saving the result. A local input error has this shape:
 
 ```json
 {
-  "status": "quality_checks_complete",
+  "status": "input_error",
   "image_analysis": {},
   "model_analysis": null,
   "validated_facts": null,
@@ -100,6 +105,22 @@ separate:
 For compatibility with the Phase I/II command output, successful results also
 retain `item_photos` and `tag_photo` as top-level aliases of the values inside
 `image_analysis`.
+
+`pipeline_service.py` is terminal-independent: `PipelineService` accepts
+ordinary explicit paths or already discovered folder-photo paths, returns plain
+structured Python results, and keeps both hosted runners injectable for offline
+tests. It never parses command-line arguments, prompts, prints, or exits. A
+high-confidence folder-role result continues automatically; a lower-confidence
+result returns `photo_role_review_required` with the strict role analysis,
+metadata, confidence, and `next_step: review_photo_roles`. A future web adapter
+can submit a selected `ResolvedPhotoRoles` object to classify without repeating
+role detection. Fact review and listing-text review deliberately remain later,
+separate interactions. `api.py` now adds a thin FastAPI adapter around this
+service: health, role detection, explicit classification, corrected folder
+classification, deterministic draft generation, and draft validation. Its
+request models validate HTTP shape only; the existing Python service and review
+validators remain the sole pipeline boundaries. There is still no frontend,
+Blob storage, authentication, or Vercel deployment configuration.
 
 `contracts.py` can represent the candidate clothing facts, their confidence,
 provenance, review state, explicit unknown values, and conflicting evidence. It
@@ -235,12 +256,15 @@ After final listing approval, the CLI automatically creates `approved_listings/`
 beside `classifier.py` and saves the complete result as
 `approved-listing-<random UUID>.json`. Exclusive file creation prevents an
 existing file from being overwritten. The absolute path appears in `saved_to`,
-and the same final JSON is also printed to the terminal.
+and the same final JSON is also printed to the terminal. Generated listing files
+remain local and are ignored by Git; only `approved_listings/.gitkeep` is
+tracked so a fresh checkout contains the output directory.
 
 Do not place the key in source files or pass it as a CLI argument. Local input
 errors exit with code 1 and never call the provider. Missing/rejected API
 configuration exits 2, model/provider errors exit 3, and a tag-retake result
-exits 4. `review_required` and `facts_validated` are successful command results.
+exits 4. An automatic-save failure exits 5 with a secret-safe structured error.
+`review_required` and `facts_validated` are successful command results.
 
 Run the automated tests:
 

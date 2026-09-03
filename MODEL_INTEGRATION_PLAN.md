@@ -1,12 +1,16 @@
 # GPT-5.6 Luna Integration Plan
 
-Status: implemented, with post-smoke vocabulary and provenance hardening.
+Status: implemented, including unordered photo-role detection, a web-safe Python
+service boundary, a thin FastAPI adapter, terminal review, listing generation,
+and automatic local JSON saving. No frontend, Blob storage, authentication, or
+deployment configuration exists.
 
 This document is the implementation record for the hosted-vision milestone. It
 records the decisions, boundaries, sequence, tests, and completion criteria used
 to connect the Python command-line prototype to the real hosted OpenAI vision
-API. The integration described here now exists; later listing-generation,
-pricing, export, and marketplace phases remain outside its scope.
+API. The integration described here now exists and has since been extended with
+review and listing generation. Pricing, destination export, a frontend, and
+marketplace automation remain outside the implemented scope.
 
 An optional unordered-folder pre-stage is implemented in
 `photo_role_detection.py`. It sends each supported top-level image under a
@@ -56,10 +60,24 @@ Pricing is deliberately not hard-coded into the application or tests. Provider
 pricing can change; record API usage and calculate costs outside the validation
 contract when needed.
 
-## Existing implementation to preserve
+## Current implementation to preserve
 
-- `classifier.py` validates at least two item photos plus one separately
-  identified tag photo and performs OpenCV quality measurements.
+- `pipeline_service.py` accepts either already assigned paths or already
+  discovered unordered folder paths, runs the terminal-independent OpenCV,
+  role-detection, hosted-analysis, and validation stages, and returns structured
+  results with injectable provider runners. Low-confidence roles return a
+  resumable `photo_role_review_required` state instead of cancellation.
+- `classifier.py` accepts either at least two explicitly identified item photos
+  plus one tag photo, or three or more unordered top-level folder images; it is
+  the thin terminal adapter for argument parsing, prompts, one JSON print, exit
+  codes, and local approved-listing persistence.
+- `api.py` supplies typed HTTP request boundaries for health, role detection,
+  explicit and confirmed-folder classification, deterministic draft generation,
+  and draft validation. It delegates to existing Python behavior and does not
+  yet accept uploads, persist approved listings, or configure Vercel.
+- `photo_role_detection.py` assigns neutral IDs, predicts image roles, and
+  automatically accepts the selected tag at 60% conservative confidence or
+  requests correction below that threshold.
 - `contracts.py` separates `image_analysis`, `model_analysis`,
   `validated_facts`, and `listing_draft` in `PipelineResult`.
 - `depop_vocab.py` performs deterministic matching against
@@ -68,32 +86,43 @@ contract when needed.
 - `FIELD_CONTRACT.md` defines field priority and provenance. Brand and size are
   tag-derived; condition requires visible item-photo evidence or explicit user
   input.
-- The CLI currently leaves `model_analysis`, `validated_facts`, and
-  `listing_draft` as `null`. Existing compatibility keys should remain until a
-  separately approved cleanup removes them.
+- `review_validation.py` exact-validates human edits, including canonical
+  numeric waist and inseam handling for jeans.
+- `listing_generation.py` creates deterministic editable listing text only from
+  approved facts; the title excludes size and the description retains it.
+- A reviewed and approved listing is saved automatically under a unique JSON
+  filename in `approved_listings/`. Generated JSON files remain local and
+  ignored by Git.
 
-## Intended end-to-end behavior
+## Implemented end-to-end behavior
 
-1. Parse and validate CLI inputs exactly as today.
-2. Run the existing OpenCV quality checks and preserve their warnings.
-3. If an input is invalid, return the existing structured input error without
-   calling the API.
-4. Build one multimodal request containing every item photo and the separately
-   labeled tag photo. The prompt must give each image an unambiguous role such
-   as `item_photo_1`, `item_photo_2`, and `tag_photo`.
-5. Ask GPT-5.6 Luna for schema-constrained candidate analysis. The model must
-   identify tag readability before proposing tag-derived facts.
-6. If the tag is `unreadable` or `uncertain`, stop with a structured
+1. Parse and validate either explicit photo roles or an unordered photo folder.
+2. In folder mode, make a strict role-detection request using neutral photo IDs.
+   Continue automatically at 60% conservative tag confidence or ask for a tag
+   correction below that threshold.
+3. Run OpenCV quality checks and preserve their warnings.
+4. If local input is invalid, return a structured input error without calling
+   the garment-analysis API.
+5. Build a multimodal request containing every resolved item photo and the tag
+   photo under unambiguous sent roles.
+6. Ask GPT-5.6 Luna for schema-constrained candidate analysis. The model first
+   reports tag readability and preserves visible jeans waist/length pairs.
+7. If the tag is `unreadable` or `uncertain`, stop with a structured
    `tag_retake_required` result. Preserve `image_analysis` and `model_analysis`,
    leave `validated_facts` and `listing_draft` as `null`, and include actionable
    retake instructions. Never guess brand or size.
-7. If the tag is readable, convert candidate facts into the existing contract
+8. If the tag is readable, convert candidate facts into the existing contract
    types and apply provenance validation.
-8. Map destination-controlled values through `depop_vocab.py`. Resolve Category
+9. Map destination-controlled values through `depop_vocab.py`. Resolve Category
    before Size. An unknown, ambiguous, invalid, conflicting, or unmapped value
    must require review rather than being coerced.
-9. Return structured candidate and validated data. Do not generate description,
-   title, price, CSV, spreadsheet rows, or marketplace actions yet.
+10. Without `--review`, return structured candidate and validated data. With
+    `--review`, allow keep/edit/clear operations and exact-validate the final
+    facts locally without another model call.
+11. Generate and separately review a deterministic title and description, then
+    require explicit approval.
+12. Save each approved result automatically as a unique local JSON file. Do not
+    generate a price, export destination rows, or perform marketplace actions.
 
 Post-smoke hardening retains this order at both boundaries: the provider schema
 requires an exact category upload value (or `null`), then Python maps Category
@@ -113,18 +142,18 @@ when supported by visible garment evidence. Lower confidence alone may still
 produce a candidate, while unsupported descriptive traits and unused slots stay
 `null`; Python remains the exact-mapping boundary.
 
-The next terminal-review milestone uses `review_validation.py` as a provider-
-independent final boundary. Human edits cannot become approved facts until
+The terminal-review stage uses `review_validation.py` as a provider-independent
+final boundary. Human edits cannot become approved facts until
 required values, exact dropdown/Brand mapping, Category-dependent Size, and
 numeric Inseam have all passed deterministic validation.
 For a resolved jeans category, a bare numeric human Size edit is treated as a
 waist measurement and normalized to Depop's quoted inch value; other category
 size vocabularies remain unchanged.
-`classifier.py --review` now provides that interactive terminal boundary. It
+`classifier.py --review` provides that interactive terminal boundary. It
 re-prompts invalid fields locally, requires explicit approval, and returns plain
-canonical approved facts while leaving listing generation separate.
+canonical approved facts before invoking the separate listing generator.
 
-The subsequent listing milestone is implemented in `listing_generation.py`.
+The listing stage is implemented in `listing_generation.py`.
 It revalidates approved facts and deterministically builds editable title and
 description text. Size is excluded from the title but retained in the
 description along with validated Inseam; blank optional facts are omitted. This
@@ -197,7 +226,11 @@ The developer instruction sent to the model must say, in substance:
   `tag_photo`.
 - Mark the tag unreadable or uncertain when the relevant text cannot be read
   confidently.
+- Preserve a visible jeans waist/length pair and normalize it as
+  `W{waist} L{length}` rather than dropping either measurement.
 - Describe only visible condition; do not infer hidden defects.
+- Propose only exact supported Style values, up to three when visibly supported,
+  and do not infer Age from appearance.
 - Use `null`, zero confidence, and review flags instead of guessing.
 - Preserve conflicts when different photos disagree.
 - Return candidate evidence only, not listing prose, prices, or upload actions.
@@ -241,12 +274,17 @@ Recommended statuses:
   unknown, conflicting, invalidly sourced, ambiguous, or unmapped.
 - `facts_validated`: all currently enforced facts passed provenance and
   destination validation.
+- `review_cancelled`: the user cancelled interactive fact or listing review.
+- `listing_approved`: facts and generated listing text passed review and the
+  result was approved for local saving.
 
-Do not introduce a universal confidence cutoff without an explicit documented
-decision. Preserve confidence, and require review based on unreadability,
-unknown values, conflicts, invalid provenance, or failed deterministic mapping.
+Do not introduce a universal fact-confidence cutoff without an explicit
+documented decision. Preserve fact confidence, and require review based on
+unreadability, unknown values, conflicts, invalid provenance, or failed
+deterministic mapping. The separate photo-role decision uses the documented 60%
+conservative tag-confidence threshold.
 
-## Small implementation chunks
+## Historical vision-integration chunks
 
 Implementation progress: Chunks 1 through 4 are complete. `openai_vision.py` contains the
 exact model configuration, strict schema builder, role-labeled Base64 image
@@ -331,6 +369,13 @@ one live readable-tag case and one unreadable-tag case.
 - API key and authorization data never appear in stdout, stderr assertions, or
   serialized results.
 - Existing image-quality and compatibility behavior remains covered.
+- Unordered folders receive exact one-time role coverage, use neutral IDs, and
+  follow the 60% automatic-tag threshold.
+- Jeans labels preserve waist and inseam; bare numeric waist edits normalize to
+  canonical quoted-inch sizes.
+- Final fact and listing reviews reject invalid edits and require approval.
+- Approved listings save automatically to unique local JSON files without
+  overwriting existing files.
 
 ## Definition of done
 
@@ -346,8 +391,8 @@ one live readable-tag case and one unreadable-tag case.
 - A live smoke test is opt-in and documented.
 - README, AGENTS, FIELD_CONTRACT, dependency instructions, CLI examples, and
   architecture descriptions match the behavior actually implemented.
-- No pricing, database, spreadsheet export, website, listing prose, or
-  marketplace automation is added.
+- No pricing, database, spreadsheet export, frontend, or marketplace automation
+  is added.
 
 ## Original implementation prompt (historical)
 

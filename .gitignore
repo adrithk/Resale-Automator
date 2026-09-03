@@ -33,3 +33,6 @@ examplephotos/
 # Locally approved listing results
 approved_listings/*
 !approved_listings/.gitkeep
+
+# Local browser-upload runtime data
+local_uploads/
