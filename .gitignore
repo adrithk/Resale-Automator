@@ -39,3 +39,6 @@ local_uploads/
 
 # Private marketplace session cookies and upload-attempt receipts
 .depop-browser/
+
+# Local planning document; not part of the public repository
+/ROADMAP.md

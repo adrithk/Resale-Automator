@@ -38,8 +38,6 @@ there is no browser automation or workaround in the supported workflow.
 Depop documents its API as private and requiring contact for access:
 [official Selling API prerequisites](https://partnerapi.depop.com/api-docs/getting-started/your-first-listing/).
 
-See the [roadmap](ROADMAP.md) for the API integration plan.
-
 ## Quickstart
 
 ### 1. Install prerequisites
@@ -155,7 +153,6 @@ validation, Cloudinary upload/cache behavior, and exact CSV/HTTP output.
 
 - [Development guide](docs/DEVELOPMENT.md): architecture, CLI, configuration, testing.
 - [Field contract](FIELD_CONTRACT.md): destination mapping and template rules.
-- [Roadmap](ROADMAP.md): completed work and next steps.
 - [Agent instructions](AGENTS.md): implementation boundaries for coding agents.
 
 The frontend uses locally bundled Montserrat under its
