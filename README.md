@@ -9,11 +9,10 @@ import into Depop. It does **not** log into Depop or publish listings.
 
 ## Demo
 
-**Demo video coming soon.**
+[Watch or download the demo (MP4, about 1 minute)](https://github.com/adrithk/Resale-Automator/releases/download/demo-2026-09-03/relist-demo.mp4)
 
-<!-- DEMO: Replace this comment and the line above with your GitHub-uploaded video URL. -->
-See [demo upload instructions](docs/demo/README.md) for where to add the recording
-and a short walkthrough checklist.
+Upload clothing photos, review the generated listing and price, then download
+the CSV and import it into Depop as a draft with photos. Publishing stays manual.
 
 ## What works
 

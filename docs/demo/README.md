@@ -1,12 +1,14 @@
-# Add the demo
+# Demo recording
 
-The main [README](../../README.md#demo) has a reserved **Demo** section.
+The [README demo section](../../README.md#demo) links to the public
+[September 3 demo recording](https://github.com/adrithk/Resale-Automator/releases/tag/demo-2026-09-03).
+The approximately one-minute MP4 shows photo intake, listing review, CSV export,
+and manual Depop import ending in a draft with photos.
 
-To add your recording, edit README.md on GitHub and drag an MP4 into the editor.
-GitHub will insert an uploaded attachment URL. Move that URL into the Demo
-section, replacing “Demo video coming soon” and the DEMO comment, then commit.
-Alternatively, add a descriptive link to a hosted recording. Do not commit a
-large raw video or personal photos just to fill the placeholder.
+The video is a GitHub release asset, not a large file in Git history. This
+demo-only release is not an application version. The original MOV is unchanged;
+the public copy is an MP4 converted with macOS's default metadata filtering.
+To replace it later, upload a new release asset and update the README link.
 
 ## Suggested walkthrough
 
