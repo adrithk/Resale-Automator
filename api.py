@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from io import BytesIO
 from typing import Any, Literal
 import uuid
 
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from PIL import Image, UnidentifiedImageError
 
 from depop_csv import DepopCsvError, generate_depop_csv, shipping_location
 from listing_generation import ListingGenerationError, generate_listing_draft, validate_listing_draft
 from local_persistence import save_approved_result
 from local_config import load_backend_environment
-from photo_hosting import PhotoHostingError, host_listing_photos
+from photo_hosting import PhotoHostingError, host_listing_photos, prepare_hosted_photo
 from openai_vision import VisionCallResult, VisionProviderError
 from listing_pricing import normalize_price, suggest_price
 from photo_role_detection import resolve_roles_with_tag_index
@@ -24,8 +26,9 @@ from review_validation import validate_final_edits
 
 LOCAL_UPLOAD_DIRECTORY = Path(__file__).resolve().parent / "local_uploads"
 MAX_LOCAL_UPLOAD_BYTES = 10 * 1024 * 1024
-ALLOWED_UPLOAD_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+ALLOWED_UPLOAD_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/webp", "application/octet-stream", ""}
 ALLOWED_UPLOAD_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+UPLOAD_FORMATS = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".webp": "WEBP"}
 
 
 class ExplicitClassificationRequest(BaseModel):
@@ -89,7 +92,8 @@ def create_app(service: PipelineService | None = None) -> FastAPI:
     async def upload_local_photo(photo: UploadFile = File(...)) -> dict[str, str]:
         """Store one browser photo locally under an opaque random name."""
         suffix = Path(photo.filename or "").suffix.lower()
-        if photo.content_type not in ALLOWED_UPLOAD_CONTENT_TYPES or suffix not in ALLOWED_UPLOAD_SUFFIXES:
+        content_type = (photo.content_type or "").split(";", 1)[0].strip().lower()
+        if content_type not in ALLOWED_UPLOAD_CONTENT_TYPES or suffix not in ALLOWED_UPLOAD_SUFFIXES:
             raise HTTPException(
                 status_code=415,
                 detail="Upload a JPEG, PNG, or WebP photo.",
@@ -100,6 +104,20 @@ def create_app(service: PipelineService | None = None) -> FastAPI:
                 status_code=413,
                 detail="Each photo must be no larger than 10 MB.",
             )
+        # Browser/phone MIME labels are hints, not proof of the file format.
+        # Check the real bytes before saving; renaming HEIC to JPG is not conversion.
+        try:
+            with Image.open(BytesIO(contents)) as image:
+                is_phone_mpo = image.format == "MPO" and suffix in {".jpg", ".jpeg"}
+                if image.format != UPLOAD_FORMATS[suffix] and not is_phone_mpo:
+                    raise ValueError("Format does not match extension")
+                image.verify()
+            if is_phone_mpo:
+                contents = prepare_hosted_photo(BytesIO(contents))
+        except PhotoHostingError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError) as error:
+            raise HTTPException(status_code=422, detail="This file is not a readable image matching its extension. Export it as JPEG, PNG, or WebP; renaming a HEIC file to .jpg is not enough.") from error
         LOCAL_UPLOAD_DIRECTORY.mkdir(parents=True, exist_ok=True)
         destination = LOCAL_UPLOAD_DIRECTORY / f"photo-{uuid.uuid4().hex}{suffix}"
         destination.write_bytes(contents)

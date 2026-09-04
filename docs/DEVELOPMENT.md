@@ -40,6 +40,18 @@ contrast, and possible glare; it does not understand garments. Warnings use a
 1,000-pixel minimum edge, blur below 25, brightness below 45 or above 210,
 contrast below 20, and glare area at least 5%. These do not replace tag checks.
 
+The picker accepts explicit image extensions as well as MIME types. Uploads
+normalize MIME case/parameters and accept image/jpg, image/pjpeg, generic binary,
+and missing labels in addition to standard types. Pillow verifies the actual
+format matches the extension before saving; OpenCV still checks decodability.
+JPEG-family MPO files with .jpg/.jpeg extensions are normalized at intake using
+the primary frame only, EXIF orientation, and metadata-free JPEG quality 95.
+Hosting also accepts older local MPO uploads. Auxiliary frames are omitted,
+not treated as animations; animated PNG/WebP remain rejected by hosting.
+The same 40 MP and 10 MB output bounds apply. Source uploads remain capped at
+10 MB. Ordinary JPEG/PNG/WebP bytes and users' original files are unchanged.
+This does not add HEIC conversion or trust MIME labels as format evidence.
+
 The hosted model must not guess unknown facts. A readable tag is required;
 brand and labeled size come from the tag or human corrections. Resolve Category
 before Size. Jeans waist/inseam pairs retain the inseam for descriptions. Age

@@ -36,8 +36,26 @@ class ListingGenerationTests(unittest.TestCase):
 
         self.assertEqual(draft["draft_title"], "Levi's Black Jeans")
         self.assertIn('34" inseam', draft["description"])
-        self.assertIn("Style: Casual, Streetwear.", draft["description"])
+        self.assertIn('Size: 36"', draft["description"])
+        self.assertNotIn("waist", draft["description"])
+        self.assertEqual(draft["description"], 'Levi\'s Black Jeans. Size: 36" with a 34" inseam.')
         self.assertNotIn("(levi-s)", draft["description"])
+
+    def test_letter_size_uses_neutral_size_label(self) -> None:
+        draft = generate_listing_draft(approved_facts(
+            category="Men >> Coats and jackets >> Vests (menswear, coats-jackets, gilets)",
+            item_type="Sweater vest", size="M", inseam=None,
+        ))
+        self.assertIn("Size: M.", draft.description)
+        self.assertNotIn("waist", draft.description)
+        self.assertEqual(draft.description, "Levi's Black Sweater vest. Size: M.")
+
+    def test_optional_attributes_do_not_add_description_prose(self) -> None:
+        facts = approved_facts(secondary_color="Blue (blue)", age="Modern (modern)")
+        draft = generate_listing_draft(facts)
+        self.assertEqual(draft.description, 'Levi\'s Black Jeans. Size: 36" with a 34" inseam.')
+        self.assertEqual(facts["style_1"], "Casual (casual)")
+        self.assertEqual(facts["condition"], "Used - Good (used_good)")
 
     def test_omits_blank_optional_facts(self) -> None:
         draft = generate_listing_draft(

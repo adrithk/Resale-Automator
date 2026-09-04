@@ -63,6 +63,41 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/depop/uploads", json={}).status_code, 404)
         self.assertEqual(self.client.get("/depop/uploads/" + "a" * 64).status_code, 404)
 
+    def test_phone_jpegs_accept_alternate_or_missing_mime_labels(self):
+        for progressive in (False, True):
+            photo = BytesIO()
+            Image.new("RGB", (40, 60), "navy").save(photo, format="JPEG", progressive=progressive)
+            for mime in ("image/jpeg", "image/jpg", "image/pjpeg", "application/octet-stream", "", "IMAGE/JPEG; charset=binary"):
+                with self.subTest(mime=mime, progressive=progressive):
+                    response = self.client.post("/uploads", files={"photo": ("IMG_1234.JPG", photo.getvalue(), mime)})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    path = Path(response.json()["photo_path"])
+                    self.assertEqual(path.suffix, ".jpg")
+                    self.assertEqual(path.read_bytes(), photo.getvalue())
+
+    def test_phone_mpo_jpg_is_normalized_before_storage(self):
+        data = BytesIO()
+        exif = Image.Exif()
+        exif[274] = 6
+        Image.new("RGB", (40, 60), "red").save(
+            data, format="MPO", save_all=True, exif=exif,
+            append_images=[Image.new("RGB", (40, 60), "blue")],
+        )
+        response = self.client.post("/uploads", files={"photo": ("IMG.JPG", data.getvalue(), "image/jpeg")})
+        self.assertEqual(response.status_code, 200, response.text)
+        with Image.open(response.json()["photo_path"]) as clean:
+            self.assertEqual(clean.format, "JPEG")
+            self.assertEqual(clean.size, (60, 40))
+            self.assertEqual(getattr(clean, "n_frames", 1), 1)
+            self.assertFalse(clean.getexif())
+            self.assertGreater(clean.getpixel((0, 0))[0], 240)
+
+    def test_generic_upload_labels_do_not_bypass_image_validation(self):
+        for contents in (b"not an image", TEST_PNG):
+            response = self.client.post("/uploads", files={"photo": ("photo.jpg", contents, "application/octet-stream")})
+            self.assertEqual(response.status_code, 422)
+        self.assertFalse(list(self.upload_root.iterdir()))
+
     def test_path_counts_are_checked_at_the_http_boundary(self) -> None:
         response = self.client.post(
             "/classifications/explicit",

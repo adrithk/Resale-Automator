@@ -26,6 +26,10 @@ FIELD_ALIASES = {
 }
 
 VALUE_ALIASES = {
+    "brand": {
+        "levi strauss co": "levi s",
+        "levi strauss and co": "levi s",
+    },
     "color": {
         "gray": "grey",
     },

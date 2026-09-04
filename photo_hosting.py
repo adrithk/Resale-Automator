@@ -60,12 +60,16 @@ def _upload_path(value: str, root: Path) -> Path:
     return path
 
 
-def prepare_hosted_photo(path: Path) -> bytes:
+def prepare_hosted_photo(path: Path | BytesIO) -> bytes:
     """Preserve orientation/dimensions, flatten transparency, omit all metadata."""
     try:
         with Image.open(path) as source:
-            if source.format not in {"JPEG", "PNG", "WEBP"} or getattr(source, "n_frames", 1) != 1:
+            # Phone JPEGs may include auxiliary MPO images. Only the primary
+            # photograph belongs in the listing; these are not animations.
+            is_mpo = source.format == "MPO"
+            if source.format not in {"JPEG", "MPO", "PNG", "WEBP"} or (not is_mpo and getattr(source, "n_frames", 1) != 1):
                 raise PhotoHostingError("Use still JPEG, PNG, or WebP photos, not animated images.")
+            source.seek(0)
             if source.width * source.height > MAX_PHOTO_PIXELS:
                 raise PhotoHostingError("Each photo must be at most 40 megapixels for hosting.")
             oriented = ImageOps.exif_transpose(source)

@@ -17,9 +17,17 @@ the CSV and import it into Depop as a draft with photos. Publishing stays manual
 ## What works
 
 - Upload 3–8 JPEG, PNG, or WebP photos: at least two garment views and one readable tag.
+- Phone `.jpg`/`.jpeg` files are supported, including uppercase extensions and
+  alternate or missing browser MIME labels. Files must be genuine images under
+  the 10 MB limit. Phone JPEGs with MPO auxiliary images are automatically
+  converted to a standard, correctly oriented JPEG; originals remain untouched.
+  Export HEIC as JPEG rather than just renaming it.
 - Automatically identify the tag and analyze clothing with OpenAI vision.
 - Review and edit validated category, brand, size, condition, colors, and style.
+  Exact tag-name aliases include “Levi Strauss & Co.” → “Levi’s”; unknown brands still need review.
 - Generate editable listing text and a USD price suggestion.
+  Descriptions contain only the generated title and size (including validated
+  inseam when available). Condition and style remain separate listing fields.
 - Approve the listing, host all photos, and save the result locally.
 - Download a Depop template-version-6 CSV with photo URLs.
 - Import the CSV in your normal logged-in Depop browser, review drafts, and publish manually.

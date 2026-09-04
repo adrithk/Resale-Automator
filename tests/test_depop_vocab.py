@@ -32,6 +32,10 @@ class DepopVocabularyTests(unittest.TestCase):
         self.assertEqual(match.code, "used_good")
         self.assertEqual(match.upload_value, "Used - Good (used_good)")
 
+    def test_levi_tag_alias_is_exact_not_fuzzy(self) -> None:
+        self.assertEqual(self.vocabulary.require_match("brand", "LEVI STRAUSS & CO.").upload_value, "Levi's (levi-s)")
+        self.assertIsNone(self.vocabulary.match("brand", "Levi Strauss & Co. unknown line"))
+
     def test_matches_labels_codes_and_explicit_aliases(self) -> None:
         self.assertEqual(
             self.vocabulary.require_match("primary_color", "gray").upload_value,

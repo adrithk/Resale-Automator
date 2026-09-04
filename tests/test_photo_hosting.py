@@ -100,6 +100,22 @@ class PhotoHostingTests(unittest.TestCase):
             self.assertFalse(clean.getexif())
         self.assertEqual(path.read_bytes(), original)
 
+    def test_phone_mpo_primary_frame_is_hostable_and_limits_still_apply(self):
+        path = self.root / "phone.jpg"
+        Image.new("RGB", (40, 60), "red").save(
+            path, format="MPO", save_all=True,
+            append_images=[Image.new("RGB", (40, 60), "blue")],
+        )
+        original = path.read_bytes()
+        with Image.open(BytesIO(prepare_hosted_photo(path))) as clean:
+            self.assertEqual(clean.format, "JPEG")
+            self.assertEqual(getattr(clean, "n_frames", 1), 1)
+            self.assertGreater(clean.getpixel((0, 0))[0], 240)
+        self.assertEqual(path.read_bytes(), original)
+        for limit in ("MAX_PHOTO_PIXELS", "MAX_PHOTO_BYTES"):
+            with patch(f"photo_hosting.{limit}", 1), self.assertRaises(PhotoHostingError):
+                prepare_hosted_photo(path)
+
     def test_transparent_pixels_are_white_and_animation_is_rejected(self):
         path = self.root / "transparent.png"
         Image.new("RGBA", (20, 20), (0, 0, 0, 0)).save(path)

@@ -70,6 +70,18 @@ class TagGateTests(unittest.TestCase):
 
 
 class FactMappingTests(unittest.TestCase):
+    def test_levi_strauss_tag_label_maps_without_weakening_provenance(self):
+        for label in ("LEVI STRAUSS & CO.", "Levi Strauss and Co."):
+            with self.subTest(label=label):
+                outcome = validate_candidate_analysis(analysis_with(
+                    brand=known(label, ("tag_photo",)),
+                ))
+                self.assertEqual(outcome.validated_facts.to_dict()["brand"]["value"], "Levi's (levi-s)")
+        outcome = validate_candidate_analysis(analysis_with(
+            brand=known("Levi Strauss & Co.", ("item_photo_1",)),
+        ))
+        self.assertIsNone(outcome.validated_facts.to_dict()["brand"]["value"])
+
     def test_exact_mapping_and_category_dependent_size(self) -> None:
         outcome = validate_candidate_analysis(
             analysis_with(
