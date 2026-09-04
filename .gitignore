@@ -36,3 +36,6 @@ approved_listings/*
 
 # Local browser-upload runtime data
 local_uploads/
+
+# Private marketplace session cookies and upload-attempt receipts
+.depop-browser/

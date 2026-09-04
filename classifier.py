@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from listing_generation import ListingDraft, generate_listing_draft
+from local_persistence import (
+    APPROVED_LISTINGS_DIRECTORY,
+    random_output_filename,
+    save_approved_result,
+)
 from openai_vision import VisionCallResult, analyze_images
 from photo_role_detection import ResolvedPhotoRoles, detect_photo_roles
 from pipeline_service import (
@@ -41,9 +45,6 @@ from review import (
 )
 
 
-APPROVED_LISTINGS_DIRECTORY = Path(__file__).resolve().parent / "approved_listings"
-
-
 def build_parser() -> argparse.ArgumentParser:
     """Describe the command-line inputs accepted by the prototype."""
     parser = argparse.ArgumentParser(
@@ -54,27 +55,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--photo-folder", help="Folder containing at least three unordered photos. Cannot be combined with --item or --tag.")
     parser.add_argument("--review", action="store_true", help="Interactively edit and approve validated facts after classification.")
     return parser
-
-
-def _random_output_filename() -> str:
-    return f"approved-listing-{uuid.uuid4().hex}.json"
-
-
-def save_approved_result(result: dict[str, Any], *, output_directory: str | Path = APPROVED_LISTINGS_DIRECTORY, filename_factory: Callable[[], str] = _random_output_filename) -> Path:
-    """Save approved JSON under a unique name without overwriting any file."""
-    directory = Path(output_directory).resolve()
-    directory.mkdir(parents=True, exist_ok=True)
-    for _ in range(10):
-        output_path = directory / filename_factory()
-        result["saved_to"] = str(output_path)
-        try:
-            with output_path.open("x", encoding="utf-8") as output_file:
-                json.dump(result, output_file, indent=2)
-                output_file.write("\n")
-            return output_path
-        except FileExistsError:
-            result.pop("saved_to", None)
-    raise OSError("Could not allocate a unique approved-listing filename.")
 
 
 def _run_terminal_review(result: dict[str, Any], *, review_runner: Callable[[Mapping[str, Any]], Mapping[str, str | None]], listing_generator: Callable[[Mapping[str, Any]], ListingDraft], listing_review_runner: Callable[[Mapping[str, str]], Mapping[str, str]]) -> dict[str, Any]:
@@ -96,7 +76,7 @@ def _exit_code(result: Mapping[str, Any]) -> int:
     return {"input_error": 1, "configuration_error": 2, "model_error": 3, "tag_retake_required": 4}.get(result["status"], 0)
 
 
-def main(arguments: Sequence[str] | None = None, *, vision_runner: Callable[[Sequence[str], str], VisionCallResult] = analyze_images, review_runner: Callable[[Mapping[str, Any]], Mapping[str, str | None]] = review_facts_interactively, listing_generator: Callable[[Mapping[str, Any]], ListingDraft] = generate_listing_draft, listing_review_runner: Callable[[Mapping[str, str]], Mapping[str, str]] = review_listing_draft_interactively, photo_role_runner: Callable[[Sequence[str]], VisionCallResult] = detect_photo_roles, photo_role_review_runner: Callable[[Sequence[str], Mapping[str, Any]], ResolvedPhotoRoles] = review_photo_roles_interactively, output_directory: str | Path = APPROVED_LISTINGS_DIRECTORY, filename_factory: Callable[[], str] = _random_output_filename) -> int:
+def main(arguments: Sequence[str] | None = None, *, vision_runner: Callable[[Sequence[str], str], VisionCallResult] = analyze_images, review_runner: Callable[[Mapping[str, Any]], Mapping[str, str | None]] = review_facts_interactively, listing_generator: Callable[[Mapping[str, Any]], ListingDraft] = generate_listing_draft, listing_review_runner: Callable[[Mapping[str, str]], Mapping[str, str]] = review_listing_draft_interactively, photo_role_runner: Callable[[Sequence[str]], VisionCallResult] = detect_photo_roles, photo_role_review_runner: Callable[[Sequence[str], Mapping[str, Any]], ResolvedPhotoRoles] = review_photo_roles_interactively, output_directory: str | Path = APPROVED_LISTINGS_DIRECTORY, filename_factory: Callable[[], str] = random_output_filename) -> int:
     """Parse CLI arguments, delegate pipeline work, and print exactly one result."""
     args = build_parser().parse_args(arguments)
     service = PipelineService(vision_runner=vision_runner, photo_role_runner=photo_role_runner)
@@ -110,18 +90,6 @@ def main(arguments: Sequence[str] | None = None, *, vision_runner: Callable[[Seq
             result["errors"] = errors
         else:
             result = service.start_folder_classification(folder_photos)
-            if result["status"] == "photo_role_review_required":
-                try:
-                    role_stage = result["photo_role_detection"]
-                    resolved = photo_role_review_runner(folder_photos, role_stage["analysis"])
-                    result = service.classify_confirmed_folder(
-                        folder_photos,
-                        VisionCallResult(analysis=role_stage["analysis"], metadata=result["photo_role_metadata"]),
-                        resolved,
-                    )
-                except ReviewCancelled:
-                    result["status"] = "review_cancelled"
-                    result["photo_role_detection"]["resolution"]["mode"] = "review_cancelled_low_confidence"
     else:
         result = service.classify_explicit(args.item, args.tag)
     if args.review and result["status"] in {"review_required", "facts_validated"}:

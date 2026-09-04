@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 import uuid
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from depop_csv import DepopCsvError, generate_depop_csv, shipping_location
 from listing_generation import ListingGenerationError, generate_listing_draft, validate_listing_draft
-from openai_vision import VisionCallResult
+from local_persistence import save_approved_result
+from local_config import load_backend_environment
+from photo_hosting import PhotoHostingError, host_listing_photos
+from openai_vision import VisionCallResult, VisionProviderError
+from listing_pricing import normalize_price, suggest_price
 from photo_role_detection import resolve_roles_with_tag_index
 from pipeline_service import PipelineService, validate_image_file
+from review_validation import validate_final_edits
 
 
 LOCAL_UPLOAD_DIRECTORY = Path(__file__).resolve().parent / "local_uploads"
@@ -28,7 +34,7 @@ class ExplicitClassificationRequest(BaseModel):
 
 
 class FolderRoleDetectionRequest(BaseModel):
-    photo_paths: list[str] = Field(min_length=3)
+    photo_paths: list[str] = Field(min_length=3, max_length=8)
 
 
 class ConfirmedFolderClassificationRequest(BaseModel):
@@ -47,6 +53,22 @@ class ListingDraftRequest(BaseModel):
     description: str | None = None
 
 
+class ApproveListingRequest(BaseModel):
+    pipeline_result: dict[str, Any]
+    facts: dict[str, str | None]
+    listing_draft: ListingDraftRequest
+    price: str | None = None
+    photo_paths: list[str] = Field(min_length=3, max_length=8)
+
+
+class ExportListingRequest(BaseModel):
+    approved_facts: dict[str, str | None]
+    listing_draft: ListingDraftRequest
+    user_approved: Literal[True]
+    price: str | None = None
+    picture_urls: list[str] = Field(min_length=3, max_length=8)
+
+
 def create_app(service: PipelineService | None = None) -> FastAPI:
     """Create the HTTP adapter without embedding pipeline or UI behavior."""
     pipeline = service or PipelineService()
@@ -56,6 +78,7 @@ def create_app(service: PipelineService | None = None) -> FastAPI:
         allow_origins=["http://localhost:3000"],
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
+        expose_headers=["Content-Disposition"],
     )
 
     @app.get("/health")
@@ -121,9 +144,28 @@ def create_app(service: PipelineService | None = None) -> FastAPI:
     @app.post("/listing-drafts")
     def generate_draft(request: FinalFactsRequest) -> dict[str, Any]:
         try:
-            return {"listing_draft": generate_listing_draft(request.facts).to_dict()}
+            draft = generate_listing_draft(request.facts).to_dict()
+            location = shipping_location()
+            pricing = suggest_price(request.facts)
+            return {
+                "listing_draft": draft,
+                "price": pricing.analysis["price"],
+                "shipping_location": location,
+                "pricing_metadata": {**dict(pricing.metadata), "basis": "model_estimate", **dict(pricing.analysis)},
+            }
         except ListingGenerationError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        except DepopCsvError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except VisionProviderError as error:
+            raise HTTPException(status_code=502, detail="Price generation failed. Check the backend API configuration or retry.") from error
+
+    @app.post("/facts/validate")
+    def validate_facts(request: FinalFactsRequest) -> dict[str, Any]:
+        outcome = validate_final_edits(request.facts)
+        if not outcome.is_valid:
+            return {"valid": False, "errors": list(outcome.errors)}
+        return {"valid": True, "approved_facts": dict(outcome.approved_facts or {})}
 
     @app.post("/listing-drafts/validate")
     def validate_draft(request: ListingDraftRequest) -> dict[str, Any]:
@@ -133,7 +175,64 @@ def create_app(service: PipelineService | None = None) -> FastAPI:
         assert draft is not None
         return {"valid": True, "listing_draft": draft.to_dict()}
 
+    @app.post("/listings/approve")
+    def approve_listing(request: ApproveListingRequest) -> dict[str, Any]:
+        facts = validate_final_edits(request.facts)
+        draft, draft_errors = validate_listing_draft(request.listing_draft.model_dump())
+        if not facts.is_valid or draft is None:
+            return {
+                "status": "approval_validation_error",
+                "fact_errors": list(facts.errors),
+                "draft_errors": list(draft_errors),
+            }
+        try:
+            price = normalize_price(request.price)
+            location = shipping_location()
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        try:
+            picture_urls = host_listing_photos(request.photo_paths, upload_directory=LOCAL_UPLOAD_DIRECTORY)
+        except PhotoHostingError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        result = dict(request.pipeline_result)
+        result.update(
+            status="listing_approved",
+            approved_facts=dict(facts.approved_facts or {}),
+            listing_draft=draft.to_dict(),
+            price=price,
+            shipping_location=location,
+            picture_urls=picture_urls,
+            uploaded_photo_paths=list(request.photo_paths),
+            review_reasons=[],
+            next_step="saved_locally",
+        )
+        try:
+            save_approved_result(result)
+        except OSError as error:
+            raise HTTPException(status_code=500, detail="The approved listing could not be saved.") from error
+        return result
+
+    @app.post("/listings/export.csv")
+    def export_listing_csv(request: ExportListingRequest) -> Response:
+        """Download one explicitly approved listing in Depop template order."""
+        try:
+            contents = generate_depop_csv(
+                request.approved_facts,
+                request.listing_draft.model_dump(),
+                price=request.price,
+                picture_urls=request.picture_urls,
+            )
+        except DepopCsvError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        filename = f"depop-listing-{uuid.uuid4().hex}.csv"
+        return Response(
+            content=contents,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     return app
 
 
+load_backend_environment()
 app = create_app()

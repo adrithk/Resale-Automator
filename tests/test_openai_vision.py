@@ -21,6 +21,7 @@ from openai_vision import (
     build_vision_request,
     encode_image_data_url,
     parse_model_response,
+    run_structured_vision_call,
 )
 
 
@@ -317,6 +318,56 @@ class HostedCallTests(unittest.TestCase):
         self.assertEqual(request["model"], "gpt-5.6-luna")
         self.assertEqual(request["timeout"], 60.0)
         self.assertNotIn("api_key", request)
+        self.assertNotIn("service_tier", request)
+        self.assertEqual(result.metadata["requested_service_tier"], "auto")
+        self.assertIsNone(result.metadata["service_tier"])
+
+    def test_service_tier_changes_only_processing_and_reports_actual_tier(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._photos(directory)
+            baseline = build_vision_request(paths[:2], paths[2])
+            for tier in ("fast", "priority", "default"):
+                with self.subTest(tier=tier):
+                    response = {**completed_response(), "service_tier": "default"}
+                    client = FakeClient([response])
+                    result = analyze_images(
+                        paths[:2], paths[2], client=client,
+                        environ={"OPENAI_API_KEY": "test-only-key", "RESALE_OPENAI_SERVICE_TIER": tier},
+                    )
+                    self.assertEqual(client.responses.calls, [
+                        {**baseline, "service_tier": tier, "timeout": 60.0}
+                    ])
+                    self.assertEqual(result.metadata["requested_service_tier"], tier)
+                    # A provider downgrade must not be reported as Fast mode.
+                    self.assertEqual(result.metadata["service_tier"], "default")
+
+    def test_invalid_service_tier_is_secret_safe_and_makes_no_request(self) -> None:
+        with mock.patch("openai_vision._create_sdk_client") as create_client:
+            with self.assertRaises(VisionConfigurationError) as caught:
+                run_structured_vision_call({}, lambda response: {}, environ={
+                    "OPENAI_API_KEY": "test-only-key",
+                    "RESALE_OPENAI_SERVICE_TIER": "accidentally-pasted-secret",
+                })
+        create_client.assert_not_called()
+        self.assertEqual(caught.exception.code, "invalid_service_tier")
+        self.assertNotIn("accidentally-pasted-secret", str(caught.exception))
+
+    def test_service_tier_is_reused_on_retry_without_mutating_request(self) -> None:
+        original = {"model": DEFAULT_MODEL, "store": False}
+        request = httpx2.Request("POST", "https://api.openai.com/v1/responses")
+        client = FakeClient([
+            openai.APITimeoutError(request=request),
+            {"service_tier": "priority"},
+        ])
+        result = run_structured_vision_call(
+            original, lambda response: {}, client=client, sleep=lambda delay: None,
+            environ={"OPENAI_API_KEY": "test-only-key", "RESALE_OPENAI_SERVICE_TIER": "fast"},
+        )
+        self.assertEqual(original, {"model": DEFAULT_MODEL, "store": False})
+        self.assertEqual(len(client.responses.calls), 2)
+        self.assertTrue(all(call["service_tier"] == "fast" for call in client.responses.calls))
+        self.assertEqual(result.metadata["attempts"], 2)
+        self.assertEqual(result.metadata["service_tier"], "priority")
 
     def test_timeout_retries_are_bounded(self) -> None:
         request = httpx2.Request("POST", "https://api.openai.com/v1/responses")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Mapping
 
 from depop_vocab import DepopValue
@@ -30,7 +31,7 @@ class ListingDraft:
 def validate_listing_draft(
     draft: Mapping[str, Any],
 ) -> tuple[ListingDraft | None, tuple[Mapping[str, str], ...]]:
-    """Require non-empty final draft text without inventing destination limits."""
+    """Require text and enforce the supplied version-6 description limits."""
     errors: list[Mapping[str, str]] = []
     values: dict[str, str] = {}
     for field_name in ("draft_title", "description"):
@@ -45,6 +46,19 @@ def validate_listing_draft(
             )
         else:
             values[field_name] = value.strip()
+    description = values.get("description", "")
+    if len(description) > 1000:
+        errors.append({
+            "code": "description_too_long",
+            "field": "description",
+            "message": "Depop descriptions must be no more than 1,000 characters.",
+        })
+    if len(re.findall(r"(?<!\w)#\w+", description)) > 5:
+        errors.append({
+            "code": "too_many_hashtags",
+            "field": "description",
+            "message": "Depop descriptions may contain at most 5 hashtags.",
+        })
     if errors:
         return None, tuple(errors)
     return ListingDraft(**values), ()

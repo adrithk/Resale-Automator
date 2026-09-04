@@ -5,8 +5,9 @@ bulk-listing template version 6. Python structures now enforce the universal
 provenance and uncertainty rules described below. The hosted-model boundary
 constrains candidate output to the documented schema, and the candidate
 validation layer applies the readable-tag gate and exact destination mapping.
-Final review validation enforces the required listing facts before approval;
-destination-specific export questions remain unresolved.
+Final review validation enforces the required listing facts before approval.
+The implemented CSV boundary exports the confirmed columns below while leaving
+still-deferred destination fields blank.
 
 The hosted integration is implemented and covered by offline fixtures and
 mocked networking. Its optional live smoke tests use user-supplied photos and
@@ -16,7 +17,7 @@ The implemented vision-model integration uses hosted `gpt-5.6-luna`, but model
 selection does not change this contract: model output is candidate evidence,
 not a validated listing value. Python must continue to enforce provenance,
 unknown values, conflicts, the readable-tag gate, and exact destination
-mapping. See `MODEL_INTEGRATION_PLAN.md` for the implementation boundary.
+mapping. See `docs/DEVELOPMENT.md` for the implementation boundary.
 
 This document maps the supplied upload-template columns to the first backend
 milestone. It is the reference for deciding what the classifier extracts, what
@@ -38,7 +39,7 @@ the user supplies, and what stays out of scope.
 | --- | --- | --- | --- |
 | Description | Required | Listing generator using validated facts only | Must be succinct and reviewed by the user. |
 | Category | Required | Vision model, then exact Depop mapping and user review | Must map to one of the 319 template values, including its canonical identifier. |
-| Price | Deferred | Future pricing system using validated facts and market-comparable data | Recommend a reasonable selling price in a later phase and require user review; do not guess a price during classification. |
+| Price | Required for CSV | Separate model price suggestion from approved facts, then user review | Estimate resale value, divide by two in Python, and round half-up to cents. Ordinary items target $10–$15; the amount remains editable. Not researched Depop average pricing. |
 | Brand | Required | Readable tag, or explicit user correction | Never guess a brand from weak visual evidence. |
 | Condition | Required | Visible garment evidence, then exact Depop mapping and user review | Must use one of the five confirmed values; state only visible condition and do not infer hidden defects. |
 | Size | Required | Readable tag, or explicit user correction | Map jeans labels such as `W36 L34`, `32x34`, or `Waist × Length 32 × 34 inch` by waist only after Category resolves; during review, a bare number such as `32` means waist inches and is stored as `32"`. Retain the parsed inseam for description wording. |
@@ -51,26 +52,52 @@ the user supplies, and what stays out of scope.
 | Style 1 | Recommended | Garment photos, then exact Depop mapping | Primary style tag from the 32 confirmed values; an exact non-conflicting value may be retained despite low confidence. |
 | Style 2 | Optional | Garment photos, then exact Depop mapping | Additional confirmed style tag; an exact non-conflicting value may be retained despite low confidence. |
 | Style 3 | Optional | Garment photos, then exact Depop mapping | Additional confirmed style tag; an exact non-conflicting value may be retained despite low confidence. |
-| Location | Deferred | User or future inventory settings | Operational inventory data selected from the 664 template values, not a classifier fact. |
-| Picture Hero URL | Deferred | Future upload/storage step | The current CLI uses local item-photo paths; unordered folder mode predicts front/back/detail roles, but URL creation comes later. |
-| Picture 2 URL | Deferred | Future upload/storage step | At least two local item photos are required now; explicit paths or confirmed unordered-folder roles are accepted, while URL creation comes later. |
-| Picture 3 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
-| Picture 4 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
-| Picture 5 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
-| Picture 6 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
-| Picture 7 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
-| Picture 8 URL | Deferred | Future upload/storage step | Optional additional listing photo. |
+| Location | Required for CSV | Backend configuration | Default `California, United States`; optional `DEPOP_SHIPPING_LOCATION` override must exactly match a template value. Never a street address or model input. |
+| Picture Hero url | Required for web CSV | Cloudinary hosting | First photo in the website's upload order, regardless of model-assigned role. |
+| Picture 2 url | Required for web CSV | Cloudinary hosting | Second uploaded photo. |
+| Picture 3 url | Required for web CSV | Cloudinary hosting | Third uploaded photo; tag photos are included. |
+| Picture 4 url | Optional | Cloudinary hosting | Fourth uploaded photo, when supplied. |
+| Picture 5 url | Optional | Cloudinary hosting | Fifth uploaded photo, when supplied. |
+| Picture 6 url | Optional | Cloudinary hosting | Sixth uploaded photo, when supplied. |
+| Picture 7 url | Optional | Cloudinary hosting | Seventh uploaded photo, when supplied. |
+| Picture 8 url | Optional | Cloudinary hosting | Eighth uploaded photo, when supplied. |
 | Domestic Shipping price | Excluded | User or future shipping settings | Shipping prices are explicitly outside the first milestone. |
 | International Shipping price | Excluded | User or future shipping settings | Shipping prices are explicitly outside the first milestone. |
 | SKU | Excluded | None | The user confirmed that SKU is not necessary. |
 
-The resolved tag photo—whether explicitly supplied or selected by unordered
-folder role detection—is an analysis input. It must not be placed into a public
-picture URL field automatically.
+At the user's explicit request, every photo uploaded through the website,
+including the tag, is automatically hosted when saving the listing. This
+supersedes the earlier analysis-only tag and deferred-URL decisions. There is
+no extra photo confirmation. Public copies have metadata removed; originals
+stay local. Upload order is retained; over-eight batches are rejected rather
+than truncated. This changes web export, not CLI classifier requirements.
 
-The template guide permits uploading listing information without photos and
-adding photos later while completing the resulting Depop drafts. The picture
-URL fields therefore remain deferred and are not classifier requirements.
+## Implemented CSV export
+
+After explicit listing approval, `depop_csv.py` revalidates the canonical facts
+and listing draft, then preserves the three leading rows from the supplied
+[Google Sheet](https://docs.google.com/spreadsheets/d/1xgHv0DpXlY1f5qADh-IL0iOHgnoma3T5/edit?gid=1319093190#gid=1319093190),
+`Use This Template!A1:Z3`: `Template version: 6` (with 25 empty cells),
+the 26 exact headers, and the 26 instruction cells. The listing starts on row 4.
+This corrects the earlier header-only export, which also used uppercase `URL`
+instead of the actual lowercase `url` in picture headers. The generated Description and approved destination
+facts populate their matching columns. `draft_title` and internal Inseam are not
+template columns; the description already carries relevant inseam wording.
+
+Price and Location are required by Depop import and are now populated: the
+approved editable price and the configured backend location. All supplied photo
+URLs fill the picture slots in order; unused slots, Domestic Shipping price,
+International Shipping price, and SKU remain empty. This is a
+conservative draft export, not a claim that the listing is publication-ready.
+The user finishes those operational details and verifies photos in Depop. CSV
+generation never uploads, publishes, or calls an external marketplace.
+
+The template's Description instruction confirms a maximum of 1,000 characters
+and five hashtags. Draft approval and CSV export now enforce both limits and
+reject invalid descriptions instead of silently truncating them. CSV uses UTF-8
+text, comma delimiters, CRLF record endings, and standard CSV escaping for
+commas, quotes, and multiline descriptions; spreadsheet colors/fonts are not
+part of CSV.
 
 ## Confirmed destination vocabularies
 
@@ -89,8 +116,8 @@ must perform the final deterministic match.
 - **Age:** `00s`, `50s`, `60s`, `70s`, `80s`, `90s`, `Antique`, and
   `Modern`.
 - **Style:** 32 confirmed values maintained in the versioned vocabulary data.
-- **Location:** 664 confirmed values; selection remains a later user or
-  inventory-setting responsibility.
+- **Location:** 664 confirmed values; selected by backend configuration, with
+  `California, United States` as the user-authorized default.
 
 Size is dependent on Category. The template maps 216 categories to 13 size
 groups, covering general letter sizes, numbered clothing sizes, waist sizes,
@@ -116,15 +143,19 @@ The classifier may propose up to two supported values, but each
 proposal must retain evidence and remain subject to user review. It must not
 infer a source merely to fill the optional second field.
 
-## Deferred pricing system
+## Implemented price suggestion
 
-Price is deferred rather than permanently excluded. A later pricing phase
-should recommend a reasonable selling price using validated garment facts,
-condition, and comparable market data such as relevant sold listings. Asking
-prices should not be treated as proof of market value, and the user must review
-and approve the recommendation. Pricing logic and market-data access are kept
-out of the current classifier milestone so incomplete or unvalidated facts do
-not create a misleading price.
+The user authorized estimated pricing after Depop rejected the earlier blank
+Price and Location cells. `listing_pricing.py` accepts only validated facts,
+asks the existing hosted model for an estimated resale value in USD, and divides
+that value by two in Python with half-up cent rounding. The prompt targets
+$10–$15 for most ordinary items without a hard clamp. This is not measured
+Depop average or sold-comparable data. The browser calls it after fact
+validation, displays an editable Price field, and requires final approval.
+Approval and CSV export revalidate positive decimal prices (up to two decimal
+places) without another model call. Errors do not silently generate a fallback.
+The CLI and garment-analysis schema are unchanged. Market-data research remains
+out of scope; no address or location is included in the pricing model input.
 
 ## Internal draft fields
 
@@ -176,8 +207,9 @@ Raw `model_analysis`, `validated_facts`, and `listing_draft` remain separate
 pipeline stages. `openai_vision.py` builds, sends, and parses strict raw candidate
 analysis. `pipeline_service.py` orchestrates local checks, optional folder-role
 detection, provider calls, and candidate validation without terminal I/O. A
-low-confidence tag role is returned as `photo_role_review_required`, not a
-cancellation; confirmed role selection can continue without another role call.
+tag role selection always uses the deterministic best model match. Conservative
+confidence remains recorded, but low confidence no longer pauses for a user
+confirmation in either CLI or localhost web mode.
 `fact_validation.py` then blocks unreadable or uncertain tags,
 validates provenance, preserves unknown/conflicting review state, and maps
 controlled values exactly through `depop_vocab.py`, resolving Category before

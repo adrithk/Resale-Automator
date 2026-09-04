@@ -459,6 +459,18 @@ def _create_sdk_client(api_key: str) -> OpenAI:
     return OpenAI(api_key=api_key, max_retries=0)
 
 
+def _service_tier(environ: Mapping[str, str] | None = None) -> str:
+    """Opt in to faster processing without changing the model or its inputs."""
+    environment = os.environ if environ is None else environ
+    tier = environment.get("RESALE_OPENAI_SERVICE_TIER", "auto").strip().lower()
+    if tier not in {"auto", "default", "fast", "priority"}:
+        raise VisionConfigurationError(
+            "invalid_service_tier",
+            "Set RESALE_OPENAI_SERVICE_TIER to auto, default, fast, or priority.",
+        )
+    return tier
+
+
 def _usage_metadata(response: Any) -> dict[str, int | None]:
     usage = _get(response, "usage")
     return {
@@ -475,6 +487,7 @@ def _success_metadata(response: Any, *, latency_ms: float, attempts: int) -> dic
         "usage": _usage_metadata(response),
         "latency_ms": round(latency_ms, 2),
         "attempts": attempts,
+        "service_tier": _get(response, "service_tier"),
     }
 
 
@@ -501,24 +514,27 @@ def run_structured_vision_call(
 ) -> VisionCallResult:
     """Execute one strict vision request with shared authentication and retries."""
     api_key = _required_api_key(environ)
+    tier = _service_tier(environ)
+    provider_request = dict(request)
+    if tier != "auto":
+        provider_request["service_tier"] = tier
     sdk_client = client if client is not None else _create_sdk_client(api_key)
     started_at = clock()
 
     for attempt in range(1, MAX_RETRIES + 2):
         try:
             response = sdk_client.responses.create(
-                **dict(request),
+                **provider_request,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
             analysis = response_parser(response)
-            return VisionCallResult(
-                analysis=analysis,
-                metadata=_success_metadata(
-                    response,
-                    latency_ms=(clock() - started_at) * 1000,
-                    attempts=attempt,
-                ),
+            metadata = _success_metadata(
+                response,
+                latency_ms=(clock() - started_at) * 1000,
+                attempts=attempt,
             )
+            metadata["requested_service_tier"] = provider_request.get("service_tier", "auto")
+            return VisionCallResult(analysis=analysis, metadata=metadata)
         except VisionResponseError:
             raise
         except AuthenticationError as error:

@@ -49,23 +49,22 @@ class PipelineServiceTests(unittest.TestCase):
         self.assertEqual(result["status"], "tag_retake_required")
         self.assertEqual(
             result["photo_role_detection"]["resolution"]["mode"],
-            "automatic_high_confidence",
+            "automatic_best_match",
         )
 
-    def test_low_confidence_folder_roles_return_structured_review_state(self) -> None:
+    def test_low_confidence_folder_roles_use_best_match_automatically(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             item_photos, tag_photo = self._photos(directory)
             service = PipelineService(
-                vision_runner=mock.Mock(),
+                vision_runner=mock.Mock(return_value=fake_vision_result()),
                 photo_role_runner=mock.Mock(return_value=fake_photo_role_result(0.59)),
             )
             result = service.start_folder_classification([item_photos[0], tag_photo, item_photos[1]])
 
-        self.assertEqual(result["status"], "photo_role_review_required")
-        self.assertEqual(result["review_stage"], "photo_roles")
-        self.assertEqual(result["next_step"], "review_photo_roles")
+        self.assertEqual(result["status"], "tag_retake_required")
         self.assertEqual(result["photo_role_detection"]["resolution"]["tag_confidence"], 0.59)
-        service.vision_runner.assert_not_called()
+        self.assertEqual(result["photo_role_detection"]["resolution"]["mode"], "automatic_best_match")
+        service.vision_runner.assert_called_once()
 
     def test_configuration_failure_is_structured_and_safe(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

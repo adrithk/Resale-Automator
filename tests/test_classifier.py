@@ -182,7 +182,7 @@ class InputValidationTests(unittest.TestCase):
         )
         self.assertEqual(
             result["photo_role_detection"]["resolution"]["mode"],
-            "automatic_high_confidence",
+            "automatic_best_match",
         )
         self.assertEqual(
             result["photo_role_detection"]["resolution"]["review_threshold"],
@@ -190,7 +190,7 @@ class InputValidationTests(unittest.TestCase):
         )
         role_review_runner.assert_not_called()
 
-    def test_folder_mode_reviews_photo_roles_below_sixty_percent(self) -> None:
+    def test_folder_mode_auto_routes_low_confidence_photo_roles(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
             for name in ("a.png", "b.png", "c.png"):
@@ -213,10 +213,10 @@ class InputValidationTests(unittest.TestCase):
 
         result = json.loads(output.getvalue())
         self.assertEqual(exit_code, 4)
-        role_review_runner.assert_called_once()
+        role_review_runner.assert_not_called()
         self.assertEqual(
             result["photo_role_detection"]["resolution"]["mode"],
-            "user_reviewed_low_confidence",
+            "automatic_best_match",
         )
 
     def test_folder_mode_cannot_mix_with_explicit_roles(self) -> None:
@@ -239,7 +239,7 @@ class InputValidationTests(unittest.TestCase):
             directory = Path(temporary_directory)
             for name in ("a.png", "b.png", "c.png"):
                 write_test_image(directory / name)
-            classifier_runner = mock.Mock()
+            classifier_runner = mock.Mock(return_value=fake_vision_result())
             output = io.StringIO()
 
             def missing_key(photos):
@@ -261,12 +261,12 @@ class InputValidationTests(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "missing_api_key")
         classifier_runner.assert_not_called()
 
-    def test_folder_role_review_can_cancel_before_classification(self) -> None:
+    def test_folder_role_review_runner_is_not_used(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
             for name in ("a.png", "b.png", "c.png"):
                 write_test_image(directory / name)
-            classifier_runner = mock.Mock()
+            classifier_runner = mock.Mock(return_value=fake_vision_result())
             output = io.StringIO()
 
             def cancel_review(photos, analysis):
@@ -283,10 +283,9 @@ class InputValidationTests(unittest.TestCase):
                 )
 
         result = json.loads(output.getvalue())
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(result["status"], "review_cancelled")
-        self.assertEqual(result["review_stage"], "photo_roles")
-        classifier_runner.assert_not_called()
+        self.assertEqual(exit_code, 4)
+        self.assertEqual(result["status"], "tag_retake_required")
+        classifier_runner.assert_called_once()
 
     def test_requires_at_least_two_item_photos(self) -> None:
         errors = validate_inputs(["one.jpg"], "tag.jpg")

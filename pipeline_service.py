@@ -26,7 +26,6 @@ from photo_role_detection import (
     ROLE_REVIEW_THRESHOLD,
     ResolvedPhotoRoles,
     detect_photo_roles,
-    photo_role_review_required,
     proposed_tag_confidence,
     resolve_proposed_roles,
 )
@@ -148,26 +147,12 @@ class PipelineService:
             return _role_error_result("model_error", error, "retry_photo_role_detection")
 
         confidence = proposed_tag_confidence(photos, detection.analysis)
-        if photo_role_review_required(photos, detection.analysis):
-            result = PipelineResult(
-                status="photo_role_review_required", image_analysis={}
-            ).to_dict()
-            result["review_stage"] = "photo_roles"
-            result["next_step"] = "review_photo_roles"
-            _attach_photo_role_context(
-                result,
-                _photo_role_context(
-                    photos, detection, resolution_mode="review_required_low_confidence", tag_confidence=confidence
-                ),
-            )
-            return result
-
         resolved = resolve_proposed_roles(photos, detection.analysis)
         return self.classify_confirmed_folder(
             photos,
             detection,
             resolved,
-            resolution_mode="automatic_high_confidence",
+            resolution_mode="automatic_best_match",
             tag_confidence=confidence,
         )
 

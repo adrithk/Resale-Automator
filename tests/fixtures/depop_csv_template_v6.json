@@ -1,0 +1,10 @@
+{
+  "source_url": "https://docs.google.com/spreadsheets/d/1xgHv0DpXlY1f5qADh-IL0iOHgnoma3T5/edit?gid=1319093190#gid=1319093190",
+  "sheet": "Use This Template",
+  "range": "A1:Z3",
+  "rows": [
+    ["Template version: 6", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    ["Description", "Category", "Price", "Brand", "Condition", "Size", "Color 1", "Color 2", "Source 1", "Source 2", "Age", "Style 1", "Style 2", "Style 3", "Location", "Picture Hero url", "Picture 2 url", "Picture 3 url", "Picture 4 url", "Picture 5 url", "Picture 6 url", "Picture 7 url", "Picture 8 url", "Domestic Shipping price", "International Shipping price", "SKU"],
+    ["Must be no more than 1,000 characters. Max. 5 hashtags.", "Select a category from the dropdown menu. You can type to search as well.", "Enter a price without a currency symbol. We'll use the currency you usually list in.", "Select a brand from the dropdown menu", "Select a condition from the dropdown menu", "Select a size from the dropdown menu", "Select a color from the dropdown menu", "Select a color from the dropdown menu", "Select a source from the dropdown menu", "Select a source from the dropdown menu", "Select an age from the dropdown menu", "Select a style from the dropdown menu", "Select a style from the dropdown menu", "Select a style from the dropdown menu", "Select the location you're shipping from", "Enter the url for the picture that will appear first", "Enter the url for the picture that will appear second", "Enter the url for the picture that will appear third", "Enter the url for the picture that will appear fourth", "Enter the url for the picture that will appear fifth", "Enter the url for the picture that will appear sixth", "Enter the url for the picture that will appear seventh", "Enter the url for the picture that will appear eighth", "Enter a shipping price without a currency symbol", "Enter a shipping price without a currency symbol", "Enter the SKU"]
+  ]
+}
