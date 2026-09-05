@@ -1,7 +1,7 @@
 """Terminal-independent orchestration for the resale listing pipeline.
 
 This module deliberately returns plain structured dictionaries.  It is the
-boundary a future HTTP adapter can call without parsing arguments, prompting,
+boundary shared by the HTTP and CLI adapters without parsing arguments, prompting,
 printing, or translating process exit codes.
 """
 
@@ -132,7 +132,7 @@ class PipelineService:
         return result
 
     def start_folder_classification(self, folder_photo_paths: Sequence[str]) -> dict[str, Any]:
-        """Detect folder roles and either continue or request an explicit resolution."""
+        """Detect folder roles and continue with the deterministic best tag match."""
         photos = list(folder_photo_paths)
         errors = validate_folder_photos(photos)
         if errors:

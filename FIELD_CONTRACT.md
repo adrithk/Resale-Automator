@@ -1,27 +1,15 @@
 # Listing Field Contract
 
-Status: editable. The destination vocabularies below were confirmed from Depop
-bulk-listing template version 6. Python structures now enforce the universal
-provenance and uncertainty rules described below. The hosted-model boundary
-constrains candidate output to the documented schema, and the candidate
-validation layer applies the readable-tag gate and exact destination mapping.
-Final review validation enforces the required listing facts before approval.
-The implemented CSV boundary exports the confirmed columns below while leaving
-still-deferred destination fields blank.
+This is the source of truth for listing-field priority, evidence, and CSV
+mapping in the current localhost app. Destination vocabularies come from the
+supplied Depop bulk-listing template version 6 and are stored in
+[`data/depop_template_v6.json`](data/depop_template_v6.json).
 
-The hosted integration is implemented and covered by offline fixtures and
-mocked networking. Its optional live smoke tests use user-supplied photos and
-are skipped by default; they verify this contract but do not change it.
-
-The implemented vision-model integration uses hosted `gpt-5.6-luna`, but model
-selection does not change this contract: model output is candidate evidence,
-not a validated listing value. Python must continue to enforce provenance,
-unknown values, conflicts, the readable-tag gate, and exact destination
-mapping. See `docs/DEVELOPMENT.md` for the implementation boundary.
-
-This document maps the supplied upload-template columns to the first backend
-milestone. It is the reference for deciding what the classifier extracts, what
-the user supplies, and what stays out of scope.
+The hosted model proposes candidate evidence. Python enforces provenance,
+unknowns, conflicts, the readable-tag gate, and exact destination values.
+Human edits pass final validation before approval. The web workflow additionally
+requires an approved price and hosted photos for CSV export; the CLI ends with
+an approved local JSON result. See [README.md](README.md) for setup and architecture.
 
 ## Requirement labels
 
@@ -29,13 +17,13 @@ the user supplies, and what stays out of scope.
 - **Recommended**: useful when supported by evidence, but may be omitted.
 - **Optional**: include only when clearly available and useful.
 - **Deferred**: belongs to a later system phase rather than the current
-  classifier milestone.
-- **Excluded**: intentionally outside the first milestone.
+  implementation.
+- **Excluded**: intentionally outside the current scope.
 - **Unresolved**: meaning or destination requirements must be clarified.
 
 ## Template-field decisions
 
-| Template field | First milestone | Allowed source | Reason or rule |
+| Template field | Requirement | Allowed source | Reason or rule |
 | --- | --- | --- | --- |
 | Description | Required | Listing generator using validated facts only | Must be succinct and reviewed by the user. |
 | Category | Required | Vision model, then exact Depop mapping and user review | Must map to one of the 319 template values, including its canonical identifier. |
@@ -61,16 +49,15 @@ the user supplies, and what stays out of scope.
 | Picture 6 url | Optional | Cloudinary hosting | Sixth uploaded photo, when supplied. |
 | Picture 7 url | Optional | Cloudinary hosting | Seventh uploaded photo, when supplied. |
 | Picture 8 url | Optional | Cloudinary hosting | Eighth uploaded photo, when supplied. |
-| Domestic Shipping price | Excluded | User or future shipping settings | Shipping prices are explicitly outside the first milestone. |
-| International Shipping price | Excluded | User or future shipping settings | Shipping prices are explicitly outside the first milestone. |
+| Domestic Shipping price | Excluded | User or future shipping settings | Shipping prices are explicitly outside the current scope. |
+| International Shipping price | Excluded | User or future shipping settings | Shipping prices are explicitly outside the current scope. |
 | SKU | Excluded | None | The user confirmed that SKU is not necessary. |
 
-At the user's explicit request, every photo uploaded through the website,
-including the tag, is automatically hosted when saving the listing. This
-supersedes the earlier analysis-only tag and deferred-URL decisions. There is
-no extra photo confirmation. Public copies have metadata removed; originals
-stay local. Upload order is retained; over-eight batches are rejected rather
-than truncated. This changes web export, not CLI classifier requirements.
+Every photo uploaded through the website, including the tag, is hosted on
+listing approval without a separate photo confirmation. Public copies have
+metadata removed; original source files remain untouched. Upload order is
+retained; over-eight batches are rejected rather than truncated. These hosting
+requirements apply to web export, not the CLI.
 
 ## Implemented CSV export
 
@@ -79,9 +66,8 @@ and listing draft, then preserves the three leading rows from the supplied
 [Google Sheet](https://docs.google.com/spreadsheets/d/1xgHv0DpXlY1f5qADh-IL0iOHgnoma3T5/edit?gid=1319093190#gid=1319093190),
 `Use This Template!A1:Z3`: `Template version: 6` (with 25 empty cells),
 the 26 exact headers, and the 26 instruction cells. The listing starts on row 4.
-This corrects the earlier header-only export, which also used uppercase `URL`
-instead of the actual lowercase `url` in picture headers. The generated Description and approved destination
-facts populate their matching columns. `draft_title` and internal Inseam are not
+Picture headers use lowercase `url`. The generated Description and approved
+destination facts populate their matching columns. `draft_title` and internal Inseam are not
 template columns; the description already carries relevant inseam wording.
 
 Price and Location are required by Depop import and are now populated: the
@@ -145,8 +131,7 @@ infer a source merely to fill the optional second field.
 
 ## Implemented price suggestion
 
-The user authorized estimated pricing after Depop rejected the earlier blank
-Price and Location cells. `listing_pricing.py` accepts only validated facts,
+`listing_pricing.py` accepts only validated facts,
 asks the existing hosted model for an estimated resale value in USD, and divides
 that value by two in Python with half-up cent rounding. The prompt targets
 $10–$15 for most ordinary items without a hard clamp. This is not measured
@@ -163,15 +148,16 @@ The requested title is not present in the supplied upload-template columns. Keep
 it as a separate internal field named `draft_title` until the destination system
 defines where it belongs.
 
-The provisional succinct patterns are:
+The deterministic generator uses these patterns after final fact approval:
 
-- Draft title: `{Brand} {Color 1} {item type}` (do not include Size)
-- Description: `{Brand} {item type} in {Color 1}[ and {Color 2}]. {Condition}. Labeled size {Size}.`
+- Draft title: `{Brand} {Color 1} {item type}` (without Size).
+- Description: `{draft_title}. Size: {Size}[ with a {Inseam} inseam].`
 
-The implemented deterministic generator follows these patterns after final fact
-approval, adds a validated Inseam to the size sentence when present, and may add
-confirmed Style and Age sentences. Blank optional facts are omitted. The title
-and description remain editable drafts until separately approved.
+For example: `Levi's Blue jeans. Size: 32" with a 34" inseam.` Omit the inseam
+clause when absent. Condition, Style, Age, and Color 2 remain separate facts and
+CSV fields; they are not added to generated prose. Never use `Labeled waist size`.
+These generation rules do not rewrite existing approved descriptions or human
+edits. Title and description remain editable until separately approved.
 
 The terminal flow performs that separate draft review. A non-empty title and
 description must be explicitly approved before the status becomes
@@ -181,8 +167,8 @@ overwriting an existing file.
 
 Both strings must be generated only after their input facts have been validated.
 If a required fact is missing, return a review requirement instead of inventing
-text. Description wording and field priorities may be revised when the actual
-upload-system requirements are confirmed.
+text. Changes to generated wording or field priorities require an explicit project
+decision; destination rules remain tied to the versioned template.
 
 ## Implemented backend boundary
 

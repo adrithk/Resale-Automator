@@ -11,8 +11,8 @@ const montserrat = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Resale Automator",
-  description: "Local clothing-listing assistant",
+  title: "Relist — Resale Listing Assistant",
+  description: "Turn clothing photos into a reviewed, photo-ready Depop listing CSV.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
