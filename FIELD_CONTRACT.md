@@ -9,7 +9,7 @@ The hosted model proposes candidate evidence. Python enforces provenance,
 unknowns, conflicts, the readable-tag gate, and exact destination values.
 Human edits pass final validation before approval. The web workflow additionally
 requires an approved price and hosted photos for CSV export; the CLI ends with
-an approved local JSON result. See [README.md](README.md) for setup and architecture.
+an approved local JSON result. See [README.md](README.md) for setup and workflow.
 
 ## Requirement labels
 

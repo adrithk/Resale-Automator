@@ -51,49 +51,6 @@ Description: Levi's Blue jeans. Size: 32" with a 34" inseam.
 Condition, style, age, and secondary color remain separate fields in the data
 and CSV. Both title and description are editable before approval.
 
-## Architecture
-
-```mermaid
-flowchart TD
-    A[Next.js photo intake] --> B[FastAPI / Python pipeline]
-    B --> C[Local file validation]
-    C --> D[OpenAI photo-role detection]
-    D --> Q[OpenCV quality checks and OpenAI garment analysis]
-    Q --> E[Python evidence validation and exact Depop mapping]
-    E --> F[Human fact review]
-    F --> G[Deterministic listing text and separate OpenAI price estimate]
-    G --> H[Human listing approval]
-    H --> I[Cloudinary photo hosting and local JSON save]
-    I --> J[Depop version-6 CSV download]
-    J --> K[Manual import and publishing in Depop]
-```
-
-The browser runs on port 3000 and calls the API on port 8000. An unordered batch
-uses two hosted requests for classification; web draft generation adds one
-pricing request. CSV download makes no new analysis, pricing, or hosting calls.
-OpenCV measures resolution, blur, lighting, contrast, and possible glare; the
-vision model handles garment understanding.
-
-The configured model is `gpt-5.6-luna`, using the Responses API with strict JSON
-schemas, low reasoning effort, high-detail image inputs, and `store=False`.
-Requests have a 60-second per-attempt timeout and at most two retries for
-transient transport failures. There is no custom model training.
-
-### Where to look in the code
-
-| Area | Entry points | What to inspect |
-| --- | --- | --- |
-| Web interface | [`web/app/page.tsx`](web/app/page.tsx), [`api.py`](api.py) | Four-stage review flow and thin HTTP adapter |
-| Pipeline | [`pipeline_service.py`](pipeline_service.py), [`classifier.py`](classifier.py) | Shared orchestration with separate web and terminal adapters |
-| Hosted models | [`openai_vision.py`](openai_vision.py), [`photo_role_detection.py`](photo_role_detection.py), [`listing_pricing.py`](listing_pricing.py) | Schemas, evidence constraints, response parsing, and shared transport |
-| Validation | [`contracts.py`](contracts.py), [`fact_validation.py`](fact_validation.py), [`review_validation.py`](review_validation.py), [`depop_vocab.py`](depop_vocab.py) | Provenance, uncertainty, exact mappings, and final human edits |
-| Output | [`listing_generation.py`](listing_generation.py), [`photo_hosting.py`](photo_hosting.py), [`local_persistence.py`](local_persistence.py), [`depop_csv.py`](depop_csv.py) | Deterministic text, image preparation/cache, exclusive saves, and template fidelity |
-| Tests | [`tests/`](tests/) | Offline provider fixtures, validation edge cases, HTTP behavior, and CSV regression checks |
-
-[FIELD_CONTRACT.md](FIELD_CONTRACT.md) documents field sources, required values,
-and export rules. [AGENTS.md](AGENTS.md) records implementation boundaries for
-coding agents.
-
 ## Run locally
 
 ### 1. Install dependencies
@@ -156,39 +113,22 @@ Open [localhost:3000](http://localhost:3000). Interactive API documentation is a
 [localhost:8000/docs](http://localhost:8000/docs). Keep both terminals running;
 this unauthenticated demo is intended for local use only.
 
-### Command-line option
+## Demo
 
-The CLI supports analysis and terminal review. Pricing, photo hosting, and CSV
-download belong to the web workflow. Make `OPENAI_API_KEY` available in the
-terminal environment, then run:
+[**Watch the one-minute demo →**](https://github.com/adrithk/Resale-Automator/releases/download/demo-2026-09-03/relist-demo.mp4)
 
-```bash
-python classifier.py --item path/to/front.jpg --item path/to/back.jpg --tag path/to/tag.jpg --review
-# Or an unordered, non-recursive folder:
-python classifier.py --photo-folder path/to/clothing-photos --review
-```
+The demo follows photo intake, review, and CSV export. The app runs on localhost;
+Depop import and publishing are manual. No credentials or setup are needed to
+watch the recording.
 
 ## Verification
 
-Run the offline suite and production frontend build without provider credentials:
-
-```bash
-RESALE_RUN_LIVE_SMOKE=0 RESALE_RUN_CLOUDINARY_SMOKE=0 .venv/bin/python -m unittest discover -s tests -v
-cd web
-npm run build
-```
-
-Tests exercise strict provider schemas and mocked transport, readable-tag gates,
-provenance and conflicts, category-dependent sizes, human corrections, pricing,
-image formats and metadata removal, upload caching, local persistence, and exact
-CSV/HTTP output. Offline tests establish behavior under those fixtures; they do
-not measure live model accuracy or latency.
-
-Three live tests are skipped by default. They require explicit opt-in and may
-incur costs: [`test_live_smoke.py`](tests/test_live_smoke.py) makes two OpenAI
-requests with user-supplied photos when `RESALE_RUN_LIVE_SMOKE=1`;
-[`test_cloudinary_smoke.py`](tests/test_cloudinary_smoke.py) uploads, verifies, and
-removes three synthetic images when `RESALE_RUN_CLOUDINARY_SMOKE=1`.
+The project was checked with automated offline tests covering photo handling,
+fact validation, pricing, saving, and CSV export, with simulated provider
+responses to check success and failure cases. All 150 offline tests passed,
+and the frontend production build completed successfully. Three optional live
+provider tests were skipped; these checks do not measure live model accuracy
+or speed.
 
 ## Scope and tradeoffs
 
@@ -224,11 +164,3 @@ locally bundled Montserrat under its [SIL Open Font License](web/app/fonts/OFL.t
 | Depop reports a template mismatch | Compare its template with the version-6 fixture. Preserve the first three rows. |
 | Phone photo is rejected | Export a real JPEG, PNG, or WebP under 10 MB; changing a HEIC filename is insufficient. |
 | npm certificate error on macOS | Configure a trusted CA bundle; do not disable TLS verification. |
-
-## Demo
-
-[**Watch the one-minute demo →**](https://github.com/adrithk/Resale-Automator/releases/download/demo-2026-09-03/relist-demo.mp4)
-
-The demo follows photo intake, review, and CSV export. The app runs on localhost;
-Depop import and publishing are manual. No credentials or setup are needed to
-watch the recording.
