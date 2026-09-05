@@ -10,14 +10,6 @@ and exports a CSV for manual import into Depop's Selling Hub.
 
 **Stack:** Python · FastAPI · OpenCV · OpenAI Responses API · Next.js · TypeScript · Cloudinary
 
-## Demo
-
-[**Watch the one-minute demo →**](https://github.com/adrithk/Resale-Automator/releases/download/demo-2026-09-03/relist-demo.mp4)
-
-The demo follows photo intake, review, and CSV export. The app runs on localhost;
-Depop import and publishing are manual. No credentials or setup are needed to
-watch the recording.
-
 ## What makes it interesting
 
 - **Evidence-aware extraction.** The vision model proposes facts with confidence
@@ -232,3 +224,11 @@ locally bundled Montserrat under its [SIL Open Font License](web/app/fonts/OFL.t
 | Depop reports a template mismatch | Compare its template with the version-6 fixture. Preserve the first three rows. |
 | Phone photo is rejected | Export a real JPEG, PNG, or WebP under 10 MB; changing a HEIC filename is insufficient. |
 | npm certificate error on macOS | Configure a trusted CA bundle; do not disable TLS verification. |
+
+## Demo
+
+[**Watch the one-minute demo →**](https://github.com/adrithk/Resale-Automator/releases/download/demo-2026-09-03/relist-demo.mp4)
+
+The demo follows photo intake, review, and CSV export. The app runs on localhost;
+Depop import and publishing are manual. No credentials or setup are needed to
+watch the recording.
